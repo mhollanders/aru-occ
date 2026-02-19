@@ -107,6 +107,7 @@ prep_data <- function(deployments, detections,
   site_lvl <- deployments |>
     pull({{ site }}) |>
     levels()
+  I <- length(site_lvl)
   species_lvl <- detections |>
     pull({{ species }}) |>
     levels()
@@ -154,12 +155,13 @@ prep_data <- function(deployments, detections,
     summarise(Delta = sum(Delta) / days, .by = c({{ site }}, survey))
   
   Delta <- deployments_aggregated |>
+    arrange({{ site }}, survey) |> 
     pivot_wider(names_from = {{ site }},
                 values_from = Delta,
                 values_fill = 0) |>
     column_to_rownames("survey") |> 
-    t()
-  surveys <- colnames(Delta)
+    as.matrix()
+  surveys <- rownames(Delta)
   J <- length(surveys)
   
   # thin detection history
@@ -183,8 +185,11 @@ prep_data <- function(deployments, detections,
   
   # create detection array
   y <- detections_aggregated |> 
-    complete({{ species }}, survey, {{ site }},
+    complete({{ species }} := factor(species_lvl, species_lvl),
+             survey := ymd(surveys), 
+             {{ site }} := factor(site_lvl, site_lvl),
              fill = list(n = 0)) |> 
+    arrange({{ species }}, survey, {{ site }}) |> 
     pull(n) |> 
     array(c(I, J, S), dimnames = list(site_lvl, surveys, species_lvl))
   
@@ -193,8 +198,9 @@ prep_data <- function(deployments, detections,
   } else {
     XY <- deployments |>
       arrange({{ site }}) |>
-      select({{ site }}, {{ projected_X }}, {{ projected_X }}) |>
-      column_to_rownames(rlang::as_name(rlang::ensym(site)))
+      select({{ site }}, {{ projected_X }}, {{ projected_Y }}) |>
+      column_to_rownames(rlang::as_name(rlang::ensym(site))) |> 
+      as.matrix()
   }
   
   # site covariates
@@ -214,6 +220,7 @@ prep_data <- function(deployments, detections,
     X2 <- detection_site_predictors |>
       arrange({{ site }}) |>
       column_to_rownames(rlang::as_name(rlang::ensym(site))) |>
+      as.matrix() |> 
       t()
     P[2] <- nrow(X2)
   }
@@ -235,6 +242,6 @@ prep_data <- function(deployments, detections,
   }
   
   # return
-  list(I = I, J = J, S = S, Delta = Delta, y = y, XY = XY, P = P, X1 = X1,
-       X2 = X2, X3 = X3, days = days)
+  list(I = I, J = J, S = S, Delta = Delta, y = y[, , 1:S], XY = XY, P = P, 
+       X1 = X1, X2 = X2, X3 = X3, days = days)
 }
