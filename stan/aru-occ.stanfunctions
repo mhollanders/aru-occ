@@ -1,0 +1,271 @@
+/** 
+ * Occupancy model for automated recording unit (ARU) data with Poisson or 
+ * negative binomial observation process.
+ * 
+ * @param y          Detection history [I, J]
+ * @param Q          Aggregated detection history [I]
+ * @param f_l        First and last survey [I, 2]
+ * @param X2         Site-level predictors for detection [P, I]
+ * @param X3         Survey-level predictors for detection [I, P, J]
+ * @param logit_psi  Occupancy logits [I]
+ * @param alpha      Detection intercept
+ * @param beta       Site-level coefficients [P[3]]
+ * @param gamma      Survey-level coefficients [P[3]]
+ * @param iota       Site-level random effects [I]
+ * @param kappa      Survey-level random effects [J]
+ * @param epsilon    Site-by-survey level random effects [I * J] (OD = 1)
+ * @param phi        Negative binomial overdispersion (OD = 2)
+ * @param log_Delta  Offsets [J, I]
+ *
+ * @return log_lik   Site-by-species level log likelihood [I]
+ * @return Omega     Marginal occupancy log likelihoods [2, I]
+ * @return log_mu    Log detection rates without residuals [J, I]
+ */
+ tuple(vector, matrix, matrix) 
+  aru_occ(data array[,] int y, data array[] int Q, data array[,] int f_l,
+          data matrix log_Delta, data matrix X2, data array[] matrix X3, 
+          row_vector logit_psi, real alpha, row_vector beta, row_vector gamma, 
+          row_vector iota, vector kappa, vector epsilon, vector phi) {
+  int I = size(y), J = size(y[1]), OLRE = size(epsilon), NB = size(phi);
+  row_vector[I] log_psi = log_inv_logit(logit_psi);
+  matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
+                        + rep_matrix(kappa, I) + log_Delta;
+  matrix[2, I] Omega;
+  Omega[2] = log_psi;
+  array[J] int y_i;
+  vector[I] log_lik;
+  int n = 0;
+  for (i in 1:I) {
+    int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
+    y_i[f:l] = y[i, f:l];
+    log_mu[:, i] += (gamma * X3[i])';
+    for (j in f:l) {
+      if (!is_inf(log_Delta[j, i])) {
+        if (NB) {
+          Omega[2, i] += neg_binomial_2_log_lpmf(y_i[j] | log_mu[j, i], phi);
+        } else {
+          if (OLRE) {
+            n += 1;
+            log_mu[j, i] += epsilon[n];
+          }
+          Omega[2, i] += poisson_log_lpmf(y_i[j] | log_mu[j, i]);
+        }
+      }
+    }
+    if (Q[i]) {
+      log_lik[i] = Omega[2, i];
+    } else {
+      Omega[1, i] = log_psi[i] - logit_psi[i];
+      log_lik[i] = log_sum_exp(Omega[:, i]);
+    }
+  }
+  return (log_lik, Omega, log_mu);
+}
+
+/** 
+ * Like aru_occ_ms(), but only outputting joint log likelihood
+ *
+ * @return log_lik   Joint log likelihood across sites and species
+ */
+real aru_occ_lpmf(data array[,] int y, data array[] int Q, 
+                  data array[,] int f_l, data matrix log_Delta, data matrix X2, 
+                  data array[] matrix X3, row_vector logit_psi, real alpha, 
+                  row_vector beta, row_vector gamma, row_vector iota, 
+                  vector kappa, vector epsilon, vector phi) {
+  int I = size(y), J = size(y[1]), OLRE = size(epsilon), NB = size(phi);
+  row_vector[I] log_psi = log_inv_logit(logit_psi);
+  matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
+                        + rep_matrix(kappa, I) + log_Delta;
+  vector[2] Omega;
+  array[J] int y_i;
+  real log_lik;
+  int n = 0;
+  for (i in 1:I) {
+    int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
+    y_i[f:l] = y[i, f:l];
+    log_mu[:, i] += (gamma * X3[i])';
+    Omega[2] = log_psi[i];
+    for (j in f:l) {
+      if (!is_inf(log_Delta[j, i])) {
+        if (NB) {
+          Omega[2] += neg_binomial_2_log_lpmf(y_i[j] | log_mu[j, i], phi);
+        } else {
+          if (OLRE) {
+            n += 1;
+            log_mu[j, i] += epsilon[n];
+          }
+          Omega[2] += poisson_log_lpmf(y_i[j] | log_mu[j, i]);
+        }
+      }
+    }
+    log_lik += Q[i] ? 
+               Omega[2] 
+               : log_sum_exp(log_psi[i] - logit_psi[i], Omega[2]);
+  }
+  return log_lik;
+}
+
+/** 
+ * Partial sum function for aru_occ_lpmf()
+ *
+ * @return log_lik   Joint log likelihood across partial sites and species
+ */
+real partial_aru_occ_lpmf(
+    data array[] int sites, data int start, data int end, data array[,] int y, 
+    data array[] int Q, data array[,] int f_l, data matrix log_Delta, 
+    data array[] int J_i, data matrix X2, data array[] matrix X3, 
+    row_vector logit_psi, real alpha, row_vector beta, row_vector gamma, 
+    row_vector iota, vector kappa, vector epsilon, vector phi) {
+  return aru_occ_lpmf(y[sites] | Q[sites], f_l[sites], log_Delta[:, sites], 
+                      X2[:, sites], X3[sites], logit_psi[sites], alpha, beta, 
+                      gamma, iota[sites], kappa, 
+                      epsilon[sum(J_i[:start - 1]) + 1:sum(J_i[:end])], phi);
+}
+
+/** 
+ * Multispecies occupancy model (MSOM) for automated recording unit (ARU) data
+ * with Poisson or negative binomial observation process.
+ * 
+ * @param y          Detection history [I, J, S]
+ * @param Q          Aggregated detection history [I, S]
+ * @param f_l        First and last survey [I, 2]
+ * @param X2         Site-level predictors for detection [P, I]
+ * @param X3         Survey-level predictors for detection [I, P, J]
+ * @param logit_psi  Occupancy logits [S, I]
+ * @param alpha      Detection intercepts [S]
+ * @param beta       Site-level coefficients [S, P]
+ * @param gamma      Survey-level coefficients [S, P]
+ * @param iota       Site-level random effects [S, I]
+ * @param kappa      Survey-level random effects [S, J]
+ * @param epsilon    Site-by-survey level random effects [S, I * J] (OD = 1)
+ * @param phi        Negative binomial overdispersion [S] (OD = 2)
+ * @param log_Delta  Offsets [J, I]
+ *
+ * @return log_lik   Site-by-species level log likelihood [S, I]
+ * @return Omega     Marginal occupancy log likelihoods [I, S, 2]
+ * @return log_mu    Log detection rates without residuals [I, S, J]
+ */
+ tuple(matrix, array[] matrix, array[] matrix) 
+  aru_occ_ms(data array[,,] int y, data array[,] int Q, data array[,] int f_l,
+             data matrix log_Delta, data matrix X2, data array[] matrix X3, 
+             matrix logit_psi, vector alpha, matrix beta, matrix gamma, 
+             matrix iota, matrix kappa, matrix epsilon, vector phi) {
+  int I = size(y), J = size(y[1]), S = size(y[1, 1]), OLRE = size(epsilon), 
+      NB = size(phi);
+  matrix[S, I] log_psi = log_inv_logit(logit_psi);
+  matrix[S, J] log_mu_i;
+  matrix[S, 2] Omega_i;
+  array[J, S] int y_i;
+  array[I] matrix[S, J] log_mu;
+  array[I] matrix[S, 2] Omega;
+  matrix[S, I] log_lik;
+  int n = 0;
+  for (i in 1:I) {
+    int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
+    y_i[f:l] = y[i, f:l];
+    Omega_i[:, 2] = log_psi[:, i];
+    log_mu_i[:, f:l] = rep_matrix(alpha + beta * X2[:, i] + iota[:, i], J_i)
+                       + gamma * X3[i, :, f:l] + kappa[:, f:l];
+    for (j in f:l) {
+      if (!is_inf(log_Delta[j, i])) {
+        log_mu_i[:, j] += log_Delta[j, i];
+        log_mu[i, :, j] = log_mu_i[:, j];
+        if (NB) {
+          for (s in 1:S) {
+            Omega_i[s, 2] += neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], 
+                                                     phi[s]);
+          }
+        } else {
+          if (OLRE) {
+            n += 1;
+            log_mu_i[:, j] += epsilon[:, n];
+          }
+          for (s in 1:S) {
+            Omega_i[s, 2] += poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
+          }
+        }
+      }
+    }
+    for (s in 1:S) {
+      if (Q[i, s]) {
+        log_lik[s, i] = Omega_i[s, 2];
+      } else {
+        Omega_i[s, 1] = log_psi[s, i] - logit_psi[s, i];
+        log_lik[s, i] = log_sum_exp(Omega_i[s]);
+        Omega[i, s] = Omega_i[s];
+      }
+    }
+    log_mu[i] = log_mu_i;
+  }
+  return (log_lik, Omega, log_mu);
+}
+
+/** 
+ * Like aru_occ_ms(), but only outputting joint log likelihood
+ *
+ * @return log_lik   Joint log likelihood across sites and species
+ */
+real aru_occ_ms_lpmf(data array[,,] int y, data array[,] int Q,
+                     data array[,] int f_l, data matrix log_Delta, 
+                     data matrix X2, data array[] matrix X3, matrix logit_psi, 
+                     vector alpha, matrix beta, matrix gamma, matrix iota, 
+                     matrix kappa, matrix epsilon, vector phi) {
+  int I = size(y), J = size(y[1]), S = size(y[1, 1]), OLRE = size(epsilon),
+      NB = size(phi);
+  matrix[S, I] log_psi = log_inv_logit(logit_psi);
+  matrix[S, J] log_mu_i;
+  matrix[S, 2] Omega_i;
+  array[J, S] int y_i;
+  real log_lik = 0;
+  int n = 0;
+  for (i in 1:I) {
+    int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
+    y_i[f:l] = y[i, f:l];
+    Omega_i[:, 2] = log_psi[:, i];
+    log_mu_i[:, f:l] = rep_matrix(alpha + beta * X2[:, i] + iota[:, i], J_i)
+                       + gamma * X3[i, :, f:l] + kappa[:, f:l];
+    for (j in f:l) {
+      if (!is_inf(log_Delta[j, i])) {
+        log_mu_i[:, j] += log_Delta[j, i];
+        if (NB) {
+          for (s in 1:S) {
+            Omega_i[s, 2] += neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], 
+                                                     phi[s]);
+          }
+        } else {
+          if (OLRE) {
+            n += 1;
+            log_mu_i[:, j] += epsilon[:, n];
+          }
+          for (s in 1:S) {
+            Omega_i[s, 2] += poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
+          }
+        }
+      }
+    }
+    for (s in 1:S) {
+      log_lik += Q[i, s] ? 
+                 Omega_i[s, 2] 
+                 : log_sum_exp(log_psi[s, i] - logit_psi[s, i], Omega_i[s, 2]);
+    }
+  }
+  return log_lik;
+}
+
+/** 
+ * Partial sum function for aru_occ_ms_lpmf()
+ *
+ * @return log_lik   Joint log likelihood across partial sites and species
+ */
+real partial_aru_occ_ms_lpmf(
+    data array[] int sites, data int start, data int end, data array[,,] int y, 
+    data array[,] int Q, data array[,] int f_l, data matrix log_Delta, 
+    data array[] int J_i, data matrix X2, data array[] matrix X3, 
+    matrix logit_psi, vector alpha, matrix beta, matrix gamma, matrix iota, 
+    matrix kappa, matrix epsilon, vector phi) {
+  return aru_occ_ms_lpmf(y[sites] | Q[sites], f_l[sites], log_Delta[:, sites], 
+                         X2[:, sites], X3[sites], logit_psi[:, sites], alpha, 
+                         beta, gamma, iota[:, sites], kappa, 
+                         epsilon[:, sum(J_i[:start - 1]) + 1:sum(J_i[:end])], 
+                         phi);
+}
