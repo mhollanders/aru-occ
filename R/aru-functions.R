@@ -160,8 +160,9 @@ prep_data <- function(deployments, detections,
                 values_from = Delta,
                 values_fill = 0) |>
     column_to_rownames("survey") |> 
-    as.matrix()
-  surveys <- rownames(Delta)
+    as.matrix() |> 
+    t()
+  surveys <- colnames(Delta)
   J <- length(surveys)
   
   # thin detection history

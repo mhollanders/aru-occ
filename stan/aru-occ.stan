@@ -5,7 +5,7 @@ functions {
 
 data {
   int<lower=1> I, J;  // number of sites and surveys
-  matrix<lower=0>[J, I] Delta;  // recording time per survey
+  matrix<lower=0>[I, J] Delta;  // recording time per survey
   array[I, J] int<lower=0> y;  // detection history
   array[3] int<lower=0> P;  // number of site-level and site-by-survey level predictors
   matrix[P[1], I] X1;  // site covariates for occupancy
@@ -31,14 +31,14 @@ transformed data {
   V[2] = sum(P[2:3]) + 2 + OLRE; // random slopes and site, survey, and OLRE effects
   array[I] int sites = linspaced_int_array(I, 1, I);  // site sequence
   array[J] real surveys = linspaced_array(J, 1, J);  // survey sequence
-  matrix[J, I] log_Delta = log(Delta);  // offsets
+  matrix[J, I] log_Delta = log(Delta');  // offsets
   array[I, 2] int f_l = first_last_survey(Delta);  // first and last surveys
   array[I] int J_i = zeros_int_array(I),  // number of surveys per site
                Q = zeros_int_array(I);  // detections by site and species
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2];
     for (j in f:l) {
-      if (Delta[j, i] > 0) {
+      if (!is_inf(log_Delta[j, i]) {
         J_i[i] += 1;
         Q[i] += y[i, j];
       }
@@ -56,7 +56,7 @@ parameters {
   // total variances, partition sparsity, and variance partitions
   vector<lower=0>[2] W;  // total variance of logit occupancy and log detection
   vector<lower=0>[2] theta;  // logistic-normal scale or Dirichlet concentration
-  vector[sum(V) - 2] W_phi_u;  // unconstrained variance partitions
+  vector[(V[1] ? V[1] - 1 : 0) + (V[2] - 1)] W_phi_u;  // unconstrained variance partitions
   
   // coefficients for predictors
   row_vector[P_i] beta_z;  // site coefficients
@@ -77,13 +77,21 @@ transformed parameters {
   // variance partitions (Dirichlet or logistic-normal) and scales
   matrix[V[2], 2] W_phi_z, W_phi = rep_matrix(0, V[2], 2);
   if (dirichlet) {
-    W_phi[:V[1], 1] = simplex_jacobian(head(W_phi_u, V[1] - 1));
-    W_phi[:, 2] = simplex_jacobian(tail(W_phi_u, V[2] - 1));
+    if (V[1]) {
+      W_phi[:V[1], 1] = simplex_jacobian(head(W_phi_u, V[1] - 1));
+    }
+    if (V[2]) {
+      W_phi[:, 2] = simplex_jacobian(tail(W_phi_u, V[2] - 1));
+    }
   } else {
-    W_phi_z[:V[1], 1] = sum_to_zero_jacobian(head(W_phi_u, V[1] - 1));
-    W_phi[:V[1], 1] = softmax(theta[1] * W_phi_z[:V[1], 1]);
-    W_phi_z[:, 2] = sum_to_zero_jacobian(tail(W_phi_u, V[2] - 1));
-    W_phi[:, 2] = softmax(theta[2] * W_phi_z[:, 2]);
+    if (V[1]) {
+      W_phi_z[:V[1], 1] = sum_to_zero_jacobian(head(W_phi_u, V[1] - 1));
+      W_phi[:V[1], 1] = softmax(theta[1] * W_phi_z[:V[1], 1]);
+    }
+    if (V[2]) {
+      W_phi_z[:, 2] = sum_to_zero_jacobian(tail(W_phi_u, V[2] - 1));
+      W_phi[:, 2] = softmax(theta[2] * W_phi_z[:, 2]);
+    }
   }
   matrix[2, V[2]] tau = sqrt(diag_post_multiply(W_phi, W))';
 
@@ -124,7 +132,7 @@ transformed parameters {
       kappa_K = gp_exp_quad_cov(surveys, 1, ell[2]);
     }
     kappa_L = cholesky_decompose(add_diag(kappa_K, 1e-9));
-    kappa = tau[2, tau_idx + 1] * kappa_L * kappa_z;
+    kappa = tau[2, tau_idx] * kappa_L * kappa_z;
   }
   
   // negative binomial overdispersion
@@ -168,11 +176,11 @@ model {
                            
   // likelihood
   target += grainsize ?
-            reduce_sum(partial_aru_occ_lupmf, sites, grainsize, y, Q, f_l, 
-                       log_Delta, J_i, X2, X3, logit_psi, log(mu_bar), 
+            reduce_sum(partial_aru_occ_lupmf, sites, grainsize, y, Q, f_l,
+                       log_Delta, J_i, X2, X3, logit_psi, log(mu_bar),
                        beta[2, :P[2]], gamma, iota, kappa, epsilon, phi)
-            : aru_occ_lupmf(y | Q, f_l, log_Delta, X2, X3, logit_psi, 
-                            log(mu_bar), beta[2, :P[2]], gamma, iota, kappa, 
+            : aru_occ_lupmf(y | Q, f_l, log_Delta, X2, X3, logit_psi,
+                            log(mu_bar), beta[2, :P[2]], gamma, iota, kappa,
                             epsilon, phi);
 }
 
@@ -237,7 +245,7 @@ generated quantities {
       zrep[i] = bernoulli_logit_rng(logit_psi[i]);
       if (OLRE) {
         for (j in f:l) {
-          if (Delta[j, i] > 0) {
+          if (!is_inf(log_Delta[j, i])) {
             n += 1;
             log_mu[j, i] += epsilon_rep[n] - epsilon[n];
           }
@@ -245,7 +253,7 @@ generated quantities {
       }
       if (zrep[i]) {
         for (j in f:l) {
-          if (Delta[j, i] > 0) {
+          if (!is_inf(log_Delta[j, i])) {
             log_mu[j, i] = min({ log_mu[j, i], 20 });
             yrep[i, j] = NB ?
                          neg_binomial_2_log_rng(log_mu[j, i], phi[1])

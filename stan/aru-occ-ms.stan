@@ -5,7 +5,7 @@ functions {
 
 data {
   int<lower=1> I, J, S;  // number of sites, surveys, and species
-  matrix<lower=0>[J, I] Delta;  // recording time per survey
+  matrix<lower=0>[I, J] Delta;  // recording time per survey
   array[I, J, S] int<lower=0> y;  // detection history
   array[3] int<lower=0> P;  // number of site-level and site-by-survey level predictors
   matrix[P[1], I] X1;  // site covariates for occupancy
@@ -34,14 +34,14 @@ transformed data {
          + (2 + OLRE) * (1 + S);  // site, survey, and OLRE effects
   array[I] int sites = linspaced_int_array(I, 1, I);  // site sequence
   array[J] real surveys = linspaced_array(J, 1, J);  // survey sequence
-  matrix[J, I] log_Delta = log(Delta);  // offsets
+  matrix[J, I] log_Delta = log(Delta');  // offsets
   array[I, 2] int f_l = first_last_survey(Delta);  // first and last surveys
   array[I] int J_i = zeros_int_array(I);  // number of surveys per site
   array[I, S] int Q = rep_array(0, I, S);  // detections by site and species
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2];
     for (j in f:l) {
-      if (Delta[j, i] > 0) {
+      if (!is_inf(log_Delta[j, i])) {
         J_i[i] += 1;
         for (s in 1:S) {
           Q[i, s] += y[i, j, s];
@@ -402,7 +402,7 @@ generated quantities {
       log_mu_i = log_mu[i];
       if (OLRE) {
         for (j in f:l) {
-          if (Delta[j, i] > 0) {
+          if (!is_inf(log_Delta[j, i])) {
             n += 1;
             log_mu_i[:, j] += epsilon_rep[:, n];
           }
@@ -411,7 +411,7 @@ generated quantities {
       for (s in 1:S) {
         if (zrep[i, s]) {
           for (j in f:l) {
-            if (Delta[j, i] > 0) {
+            if (!is_inf(log_Delta[j, i])) {
               log_mu_i[s, j] = min({ log_mu_i[s, j], 20 });
               yrep[i, j, s] = NB ?
                               neg_binomial_2_log_rng(log_mu_i[s, j], phi[s])
