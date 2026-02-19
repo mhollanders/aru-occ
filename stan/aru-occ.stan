@@ -38,7 +38,7 @@ transformed data {
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2];
     for (j in f:l) {
-      if (!is_inf(log_Delta[j, i]) {
+      if (!is_inf(log_Delta[j, i])) {
         J_i[i] += 1;
         Q[i] += y[i, j];
       }
