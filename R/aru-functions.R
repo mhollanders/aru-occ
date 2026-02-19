@@ -155,12 +155,12 @@ prep_data <- function(deployments, detections,
     summarise(Delta = sum(Delta) / days, .by = c({{ site }}, survey))
   
   Delta <- deployments_aggregated |>
-    arrange({{ site }}, survey) |> 
     pivot_wider(names_from = {{ site }},
                 values_from = Delta,
-                values_fill = 0) |>
+                values_fill = 0,
+                names_sort = TRUE) |>
+    arrange(survey) |> 
     column_to_rownames("survey") |> 
-    as.matrix() |> 
     t()
   surveys <- colnames(Delta)
   J <- length(surveys)
@@ -244,5 +244,11 @@ prep_data <- function(deployments, detections,
   
   # return
   list(I = I, J = J, S = S, Delta = Delta, y = y[, , 1:S], XY = XY, P = P, 
-       X1 = X1, X2 = X2, X3 = X3, days = days)
+       X1 = X1, X2 = X2, X3 = X3, days = days,
+       deployments_aggregated = deployments_aggregated, surveys = surveys)
+}
+
+# add Stan default to output of dh()
+append_defaults <- function(dh) {
+  append(dh, list(dirichlet = 1, period = 0, grainsize = 0, D = 100, OD = 0))
 }
