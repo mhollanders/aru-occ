@@ -244,8 +244,7 @@ prep_data <- function(deployments, detections,
   
   # return
   list(I = I, J = J, S = S, Delta = Delta, y = y[, , 1:S], XY = XY, P = P, 
-       X1 = X1, X2 = X2, X3 = X3, days = days,
-       deployments_aggregated = deployments_aggregated, surveys = surveys)
+       X1 = X1, X2 = X2, X3 = X3, days = days)
 }
 
 # add Stan default to output of dh()
