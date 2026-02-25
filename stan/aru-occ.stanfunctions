@@ -25,7 +25,7 @@
   aru_occ(data array[,] int y, data array[] int Q, data array[,] int f_l,
           data matrix log_Delta, data matrix X2, data array[] matrix X3, 
           row_vector logit_psi, real alpha, row_vector beta, row_vector gamma, 
-          row_vector iota, vector kappa, vector epsilon, vector phi) {
+          row_vector iota, vector kappa, array[] vector epsilon, vector phi) {
   int I = size(y), J = size(y[1]), OLRE = size(epsilon), NB = size(phi);
   row_vector[I] log_psi = log_inv_logit(logit_psi);
   matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
@@ -46,7 +46,7 @@
         } else {
           if (OLRE) {
             n += 1;
-            log_mu[j, i] += epsilon[n];
+            log_mu[j, i] += epsilon[1, n];
           }
           Omega[2, i] += poisson_log_lpmf(y_i[j] | log_mu[j, i]);
         }
@@ -71,14 +71,14 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
                   data array[,] int f_l, data matrix log_Delta, data matrix X2, 
                   data array[] matrix X3, row_vector logit_psi, real alpha, 
                   row_vector beta, row_vector gamma, row_vector iota, 
-                  vector kappa, vector epsilon, vector phi) {
+                  vector kappa, array[] vector epsilon, vector phi) {
   int I = size(y), J = size(y[1]), OLRE = size(epsilon), NB = size(phi);
   row_vector[I] log_psi = log_inv_logit(logit_psi);
   matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
                         + rep_matrix(kappa, I) + log_Delta;
   vector[2] Omega;
   array[J] int y_i;
-  real log_lik;
+  real log_lik = 0;
   int n = 0;
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
@@ -92,7 +92,7 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
         } else {
           if (OLRE) {
             n += 1;
-            log_mu[j, i] += epsilon[n];
+            log_mu[j, i] += epsilon[1, n];
           }
           Omega[2] += poisson_log_lpmf(y_i[j] | log_mu[j, i]);
         }
@@ -115,11 +115,11 @@ real partial_aru_occ_lpmf(
     data array[] int Q, data array[,] int f_l, data matrix log_Delta, 
     data array[] int J_i, data matrix X2, data array[] matrix X3, 
     row_vector logit_psi, real alpha, row_vector beta, row_vector gamma, 
-    row_vector iota, vector kappa, vector epsilon, vector phi) {
+    row_vector iota, vector kappa, array[] vector epsilon, vector phi) {
   return aru_occ_lpmf(y[sites] | Q[sites], f_l[sites], log_Delta[:, sites], 
                       X2[:, sites], X3[sites], logit_psi[sites], alpha, beta, 
                       gamma, iota[sites], kappa, 
-                      epsilon[sum(J_i[:start - 1]) + 1:sum(J_i[:end])], phi);
+                      epsilon[:, sum(J_i[:start - 1]) + 1:sum(J_i[:end])], phi);
 }
 
 /** 

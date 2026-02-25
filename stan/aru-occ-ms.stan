@@ -23,8 +23,9 @@ data {
 transformed data {
   int P_i = sum(P[1:2]),  // total number of site-level predictors
       P_i_max = max(P[1:2]),  // maximum number of site-level predictors
+      SP = sum(XY[1]) != 0,  // spatial GP indicator
       periodic = period > 0,  // periodic GP indicator
-      GP = 2 + periodic,  // number of GPs
+      GP = SP + 1 + periodic,  // number of GPs
       OLRE = OD == 1,  // observation-level random effects
       NB = OD == 2,  // negative binomial overdispersion
       G = (P[1] > 0) + (P[2] > 0) + (P[3] > 0) + 2 + OLRE;  // number of species-level correlation matrices
@@ -123,12 +124,12 @@ transformed parameters {
   array[2] matrix[S, P_i_max] beta;
   row_vector[P[3]] gamma_bar;
   matrix[S, P[3]] gamma;
-  row_vector[I] iota_bar;
+  row_vector[I] iota_bar = iota_bar_z';
   matrix[S, I] iota;
-  row_vector[J] kappa_bar;
+  row_vector[J] kappa_bar = kappa_bar_z';
   matrix[S, J] kappa;
   {
-    int tau_idx = 2, O_idx = 0;
+    int tau_idx = 2, GP_idx = 1, O_idx = 0;
     
     // site-level predictors
     if (P_i) {
@@ -166,56 +167,65 @@ transformed parameters {
     
     // site effects
     tau_idx += 2 * P[3];
-    O_idx += 1; 
-    matrix[I, I] iota_K = gp_exp_quad_cov(XY, 1, ell[1]),
-                 iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
-    iota_bar = iota_bar_z' * iota_U * tau[2, tau_idx];
-    row_vector[S] iota_t = segment(tau[2], tau_idx + 1, S);
-    iota = rep_matrix(iota_bar, S);
-    if (SS) {
-      matrix[S, I] iota_s;
-      for (s in 1:S) {
-        iota_K = gp_exp_quad_cov(XY, 1, ell_s[s, 1]);
-        iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
-        iota_s[s] = iota_z[s] * iota_U;
-      }
-      iota += diag_pre_multiply(iota_t, O_L[O_idx]) * iota_s;
-    } else {
-      iota += diag_pre_multiply(iota_t, O_L[O_idx]) * iota_z * iota_U;
+    O_idx += 1;
+    iota_bar *= tau[2, tau_idx];
+    matrix[I, I] iota_K, iota_U;
+    if (SP) {
+      GP_idx += 1;
+      iota_K = gp_exp_quad_cov(XY, 1, ell[1]);
+      iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
+      iota_bar *= iota_U;
     }
+    iota = rep_matrix(iota_bar, S);
+    matrix[S, I] iota_s = diag_pre_multiply(segment(tau[2], tau_idx + 1, S), 
+                                            O_L[O_idx]) * iota_z;
+    if (SP) {
+      if (SS) {
+        for (s in 1:S) {
+          iota_K = gp_exp_quad_cov(XY, 1, ell_s[s, 1]);
+          iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
+          iota_s[s] *= iota_U;
+        }
+      } else {
+        iota_s *= iota_U;
+      }
+    }
+    iota += iota_s;
     
     // survey effects
     tau_idx += 1 + S;
     O_idx += 1;
+    GP_idx += 1;
     matrix[J, J] kappa_K, kappa_U;
-    vector[periodic * 2] sqrt_kappa_v;
+    vector[periodic * 2] kappa_t;
     if (periodic) {
-      sqrt_kappa_v = sqrt(kappa_v);
-      kappa_K = gp_exp_quad_cov(surveys, sqrt_kappa_v[1], ell[2])
-                + gp_periodic_cov(surveys, sqrt_kappa_v[2], ell[3], period);
+      kappa_t = tau[2, tau_idx] * sqrt(kappa_v);
+      kappa_K = gp_exp_quad_cov(surveys, kappa_t[1], ell[GP_idx])
+                + gp_periodic_cov(surveys, kappa_t[2], ell[GP_idx + 1], period);
     } else {
-      kappa_K = gp_exp_quad_cov(surveys, 1, ell[2]);
+      kappa_K = gp_exp_quad_cov(surveys, tau[2, tau_idx], ell[2]);
     }
     kappa_U = cholesky_decompose(add_diag(kappa_K, 1e-9))';
-    kappa_bar = kappa_bar_z' * kappa_U * tau[2, tau_idx];
-    row_vector[S] kappa_t = segment(tau[2], tau_idx + 1, S);
+    kappa_bar *= kappa_U;
     kappa = rep_matrix(kappa_bar, S);
+    matrix[S, J] kappa_s = diag_pre_multiply(segment(tau[2], tau_idx + 1, S), 
+                                             O_L[O_idx]) * kappa_z;
     if (SS) {
-      matrix[S, J] kappa_s;
+      kappa_t = sqrt(kappa_v);
       for (s in 1:S) {
         if (periodic) {
-          kappa_K = gp_exp_quad_cov(surveys, sqrt_kappa_v[1], ell_s[s, 2])
-                    + gp_periodic_cov(surveys, sqrt_kappa_v[2], ell_s[s, 3], period);
+          kappa_K = gp_exp_quad_cov(surveys, kappa_t[1], ell_s[s, 2])
+                    + gp_periodic_cov(surveys, kappa_t[2], ell_s[s, 3], period);
         } else {
           kappa_K = gp_exp_quad_cov(surveys, 1, ell_s[s, 2]);
         }
         kappa_U = cholesky_decompose(add_diag(kappa_K, 1e-9))';
-        kappa_s[s] = kappa_z[s] * kappa_U;
+        kappa_s[s] *= kappa_U;
       }
-      kappa += diag_pre_multiply(kappa_t, O_L[O_idx]) * kappa_s;
     } else {
-      kappa += diag_pre_multiply(kappa_t, O_L[O_idx]) * kappa_z * kappa_U;
+      kappa_s *= kappa_U;
     }
+    kappa += kappa_s;
   }
   
   // negative binomial overdispersion
@@ -347,26 +357,26 @@ generated quantities {
       int tau_idx = 1 + 2 * sum(P[2:3]) + 2, 
           O_idx = (P[1] > 0) + (P[2] > 0) + (P[3] > 0) + 1;
       matrix[I, I] iota_K, iota_U;
-      matrix[S, I] iota_rep;
+      matrix[S, I] iota_s, iota_rep;
       array[D] matrix[S, I] log_lik_k;
       for (d in 1:D) {
-        row_vector[S] iota_t = segment(tau[2], tau_idx, S);
-        iota_rep = to_matrix(normal_rng(zeros[:S * I], ones[:S * I]), S, I);
-        if (SS) {
-          matrix[S, I] iota_s;
-          for (s in 1:S) {
-            iota_K = gp_exp_quad_cov(XY, 1, ell_s[s, 1]);
+        iota_s = to_matrix(normal_rng(zeros[:S * I], ones[:S * I]), S, I);
+        iota_s = diag_pre_multiply(segment(tau[2], tau_idx, S), O_L[O_idx])
+                     * iota_s;
+        if (SP) {
+          if (SS) {
+            for (s in 1:S) {
+              iota_K = gp_exp_quad_cov(XY, 1, ell_s[s, 1]);
+              iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
+              iota_s[s] *= iota_U;
+            }
+          } else {
+            iota_K = gp_exp_quad_cov(XY, 1, ell[1]);
             iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
-            iota_s[s] = iota_rep[s] * iota_U;
+            iota_s *= iota_U;
           }
-          iota_rep = rep_matrix(iota_bar, S)
-                     + diag_pre_multiply(iota_t, O_L[O_idx]) * iota_s;
-        } else {
-          iota_K = gp_exp_quad_cov(XY, 1, ell[1]);
-          iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
-          iota_rep = rep_matrix(iota_bar, S)
-                     + diag_pre_multiply(iota_t, O_L[O_idx]) * iota_rep * iota_U;
         }
+        iota_rep = rep_matrix(iota_bar, S) + iota_s;
         if (OLRE) {
           epsilon_rep = to_matrix(normal_rng(zeros, ones), S, N);
           epsilon_rep = rep_matrix(epsilon_bar, S)

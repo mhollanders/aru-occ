@@ -22,8 +22,9 @@ data {
 transformed data {
   int P_i = sum(P[1:2]),  // total number of site-level predictors
       P_i_max = max(P[1:2]),  // maximum number of site-level predictors
+      SP = sum(XY[1]) != 0,  // spatial indicator
       periodic = period > 0,  // periodic GP indicator
-      GP = 2 + periodic,  // number of GPs
+      GP = SP + 1 + periodic,  // number of GPs
       OLRE = OD == 1,  // observation-level random effects
       NB = OD == 2;  // negative binomial overdispersion
   array[2] int V;  // variance partitions for occupancy and detection
@@ -98,10 +99,10 @@ transformed parameters {
   // coefficients and and site and survey effects
   matrix[2, P_i_max] beta = rep_matrix(0, 2, P_i_max);
   row_vector[P[3]] gamma;
-  row_vector[I] iota;
+  row_vector[I] iota = iota_z';
   vector[J] kappa;
   {
-    int tau_idx = 1;
+    int tau_idx = 1, GP_idx = 1;
     
     // site-level predictors
     if (P_i) {
@@ -117,22 +118,25 @@ transformed parameters {
     
     // site effects
     tau_idx += P[3];
-    matrix[I, I] iota_K = gp_exp_quad_cov(XY, tau[2, tau_idx], ell[1]),
-                 iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
-    iota = iota_z' * iota_U;
+    iota *= tau[2, tau_idx];
+    if (SP) {
+      matrix[I, I] iota_K = gp_exp_quad_cov(XY, 1, ell[1]),
+                   iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
+      iota *= iota_U;
+    }
     
     // survey effects
     tau_idx += 1;
     matrix[J, J] kappa_K, kappa_L;
     if (periodic) {
-      vector[2] sqrt_kappa_v = sqrt(kappa_v[1]);
-      kappa_K = gp_exp_quad_cov(surveys, sqrt_kappa_v[1], ell[2])
-                + gp_periodic_cov(surveys, sqrt_kappa_v[2], ell[3], period);
+      vector[2] kappa_t = tau[2, tau_idx] * sqrt(kappa_v[1]);
+      kappa_K = gp_exp_quad_cov(surveys, kappa_t[1], ell[GP_idx])
+                + gp_periodic_cov(surveys, kappa_t[2], ell[GP_idx + 1], period);
     } else {
-      kappa_K = gp_exp_quad_cov(surveys, 1, ell[2]);
+      kappa_K = gp_exp_quad_cov(surveys, tau[2, tau_idx], ell[GP_idx]);
     }
     kappa_L = cholesky_decompose(add_diag(kappa_K, 1e-9));
-    kappa = tau[2, tau_idx] * kappa_L * kappa_z;
+    kappa = kappa_L * kappa_z;
   }
   
   // negative binomial overdispersion
@@ -146,11 +150,7 @@ transformed parameters {
                 + gamma_lpdf(mu_bar | 1, 4)
                 + student_t_lpdf(W | 3, 0, 2.5)
                 + gamma_lpdf(theta | 1, 1)
-                + inv_gamma_lpdf(ell[1] | 3, 1)
-                + inv_gamma_lpdf(ell[2] | 3, 1);
-  if (periodic) {
-    lprior += inv_gamma_lpdf(ell[3] | 2, 1);
-  }
+                + inv_gamma_lpdf(ell | 3, 1);
   if (NB) {
     lprior += exponential_lpdf(inv_sqrt_phi | 2);
   }
@@ -162,16 +162,19 @@ model {
             + std_normal_lupdf(gamma_z)
             + std_normal_lupdf(iota_z)
             + std_normal_lupdf(kappa_z);
-  for (d in 1:2) {
+  if (V[1]) {
     target += dirichlet ?
-              dirichlet_lupdf(W_phi[:V[d], d] | rep_vector(inv(theta[d]), V[d]))
-              : std_normal_lupdf(W_phi_z[:V[d], d]);
+              dirichlet_lupdf(W_phi[:V[1], 1] | rep_vector(inv(theta[1]), V[1]))
+              : std_normal_lupdf(W_phi_z[:V[1], 1]);
   }
+  target += dirichlet ?
+            dirichlet_lupdf(W_phi[:V[2], 2] | rep_vector(inv(theta[2]), V[2]))
+            : std_normal_lupdf(W_phi_z[:V[2], 2]);
   
-  // multivariate normal residuals for Poisson
-  vector[OLRE * N] epsilon;
+  // residuals for Poisson
+  array[OLRE] vector[N] epsilon;
   if (OLRE) {
-    epsilon = tau[2, V[2]] * epsilon_z[1];
+    epsilon[1] = tau[2, V[2]] * epsilon_z[1];
   }
                            
   // likelihood
@@ -194,9 +197,9 @@ generated quantities {
   
   {
     // reconstruct log likelihood and latent states
-    vector[OLRE * N] epsilon, epsilon_rep;
+    array[OLRE] vector[N] epsilon, epsilon_rep;
     if (OLRE) {
-      epsilon = tau[2, V[2]] * epsilon_z[1];
+      epsilon[1] = tau[2, V[2]] * epsilon_z[1];
     }
     array[N] int zeros = zeros_int_array(N), ones = ones_int_array(N);
     tuple(vector[I], matrix[2, I], matrix[J, I]) lp =
@@ -217,12 +220,14 @@ generated quantities {
       row_vector[I] iota_rep;
       matrix[I, D] log_lik_k;
       for (d in 1:D) {
-        iota_rep = to_row_vector(normal_rng(zeros[:I], ones[:I]));
-        iota_K = gp_exp_quad_cov(XY, tau[2, tau_idx], ell[1]);
-        iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
-        iota_rep = iota_rep * iota_U;
+        iota_rep = to_row_vector(normal_rng(zeros[:I], tau[2, tau_idx]));
+        if (SP) {
+          iota_K = gp_exp_quad_cov(XY, 1, ell[1]);
+          iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
+          iota_rep *= iota_U;
+        }
         if (OLRE) {
-          epsilon_rep = tau[2, V[2]] * to_vector(normal_rng(zeros, ones));
+          epsilon_rep[1] = to_vector(normal_rng(zeros, tau[2, V[2]]));
         }
         lp = aru_occ(y, Q, f_l, log_Delta, X2, X3, logit_psi, log(mu_bar), 
                      beta[2, :P[2]], gamma, iota_rep, kappa, epsilon_rep, phi);
@@ -235,7 +240,7 @@ generated quantities {
       
       // produce posterior predictive OLREs regardless
     } else if (OLRE) {
-      epsilon_rep = tau[2, V[2]] * to_vector(normal_rng(zeros, ones));
+      epsilon_rep[1] = to_vector(normal_rng(zeros, tau[2, V[2]]));
     }
     
     // posterior predictions
@@ -247,7 +252,7 @@ generated quantities {
         for (j in f:l) {
           if (!is_inf(log_Delta[j, i])) {
             n += 1;
-            log_mu[j, i] += epsilon_rep[n] - epsilon[n];
+            log_mu[j, i] += epsilon_rep[1, n] - epsilon[1, n];
           }
         }
       }

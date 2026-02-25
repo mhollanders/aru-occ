@@ -12,8 +12,8 @@ aggregate_by_days <- function(dates, reference, days = 1) {
 # prepare data for Stan
 prep_data <- function(deployments, detections, 
                       site = site, start = start, end = end, 
-                      projected_X, projected_Y, timestamp = timestamp, 
-                      species = species, days = 1, reference_date, 
+                      projected_X, projected_Y, timestamp = timestamp,
+                      species = species, count = count, days = 1, reference_date, 
                       day_start = "midday", minutes, failures = NULL, 
                       failure_start = failure_start, failure_end = failure_end, 
                       occupancy_site_predictors = NULL,
@@ -100,7 +100,7 @@ prep_data <- function(deployments, detections,
                               {{ start }} , {{ end }} )) |> 
     filter(outside)
   if (nrow(outside)) {
-    message("`detections` contains timestamps outside of `start` and `end` dates for some sites. These detections are filtered out.")
+    message(glue::glue("`detections` contains {nrow(outside)} timestamps outside of `start` and `end` dates for some sites. These detections are filtered out."))
   }
   
   # number of sites and species
@@ -172,8 +172,11 @@ prep_data <- function(deployments, detections,
       mutate(delta = difftime({{ timestamp }},
                               lag({{ timestamp}}, default = first({{ timestamp }})),
                               units = "mins"),
+             cluster = cumsum(as.double(delta)) %/% minutes,
              .by = c({{ site }}, {{ species }})) |> 
-      filter(delta == 0 | delta > minutes)
+      filter({{ count }} == max({{ count }}),
+             {{ timestamp }} == min({{ timestamp }}),
+             .by = c({{ site }}, {{ species }}, cluster))
   }
   
   # aggregate detection history
@@ -182,7 +185,7 @@ prep_data <- function(deployments, detections,
                             hours(ifelse(day_start == "midnight", 0, 12))),
            survey = aggregate_by_days(date, reference_date, days)) |>
     filter(survey %in% surveys) |>
-    count({{ site }}, survey, {{ species }})
+    summarise(n = sum({{ count }}), .by = c({{ site }}, survey, {{ species }}))
   
   # create detection array
   y <- detections_aggregated |> 
