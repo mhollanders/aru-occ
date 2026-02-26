@@ -102,7 +102,7 @@ transformed parameters {
   row_vector[I] iota = iota_z';
   vector[J] kappa;
   {
-    int tau_idx = 1, GP_idx = 1;
+    int tau_idx = 1, GP_idx = 0;
     
     // site-level predictors
     if (P_i) {
@@ -120,13 +120,15 @@ transformed parameters {
     tau_idx += P[3];
     iota *= tau[2, tau_idx];
     if (SP) {
-      matrix[I, I] iota_K = gp_exp_quad_cov(XY, 1, ell[1]),
+      GP_idx += 1;
+      matrix[I, I] iota_K = gp_exp_quad_cov(XY, 1, ell[GP_idx]),
                    iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
       iota *= iota_U;
     }
     
     // survey effects
     tau_idx += 1;
+    GP_idx += 1;
     matrix[J, J] kappa_K, kappa_L;
     if (periodic) {
       vector[2] kappa_t = tau[2, tau_idx] * sqrt(kappa_v[1]);
