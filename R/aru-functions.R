@@ -9,6 +9,21 @@ aggregate_by_days <- function(dates, reference, days = 1) {
   reference + as.integer(dates - reference) %/% days * days
 }
 
+# assign detections to a cluster
+assign_clusters <- function(times, gap) {
+  cluster <- integer(length(times))
+  current_cluster <- 1L
+  last_time <- times[1]
+  for (i in seq_along(times)) {
+    if (as.double(difftime(times[i], last_time, units = "mins")) >= gap) {
+      current_cluster <- current_cluster + 1L
+      last_time <- times[i]
+    }
+    cluster[i] <- current_cluster
+  }
+  cluster
+}
+
 # prepare data for Stan
 prep_data <- function(deployments, detections, 
                       site = site, start = start, end = end, 
@@ -165,18 +180,13 @@ prep_data <- function(deployments, detections,
   surveys <- colnames(Delta)
   J <- length(surveys)
   
-  # thin detection history
+  # thin detection history (messy)
   if (!missing(minutes)) {
     detections <- detections |> 
-      arrange({{ site }}, {{ species }}, {{ timestamp }}) |> 
-      mutate(delta = difftime({{ timestamp }},
-                              lag({{ timestamp}}, default = first({{ timestamp }})),
-                              units = "mins"),
-             cluster = cumsum(as.double(delta)) %/% minutes,
+      mutate(cluster = assign_clusters({{ timestamp }}, minutes),
              .by = c({{ site }}, {{ species }})) |> 
-      filter({{ count }} == max({{ count }}),
-             {{ timestamp }} == min({{ timestamp }}),
-             .by = c({{ site }}, {{ species }}, cluster))
+      slice_max({{ count }}, with_ties = FALSE, 
+                by = c({{ site }}, {{ species }}, cluster))
   }
   
   # aggregate detection history
