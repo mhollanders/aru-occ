@@ -203,7 +203,7 @@ transformed parameters {
       kappa_K = gp_exp_quad_cov(surveys, kappa_t[1], ell[GP_idx])
                 + gp_periodic_cov(surveys, kappa_t[2], ell[GP_idx + 1], period);
     } else {
-      kappa_K = gp_exp_quad_cov(surveys, tau[2, tau_idx], ell[2]);
+      kappa_K = gp_exp_quad_cov(surveys, tau[2, tau_idx], ell[GP_idx]);
     }
     kappa_U = cholesky_decompose(add_diag(kappa_K, 1e-9))';
     kappa_bar *= kappa_U;
@@ -214,10 +214,10 @@ transformed parameters {
       kappa_t = sqrt(kappa_v);
       for (s in 1:S) {
         if (periodic) {
-          kappa_K = gp_exp_quad_cov(surveys, kappa_t[1], ell_s[s, 2])
-                    + gp_periodic_cov(surveys, kappa_t[2], ell_s[s, 3], period);
+          kappa_K = gp_exp_quad_cov(surveys, kappa_t[1], ell_s[s, GP_idx])
+                    + gp_periodic_cov(surveys, kappa_t[2], ell_s[s, GP_idx + 1], period);
         } else {
-          kappa_K = gp_exp_quad_cov(surveys, 1, ell_s[s, 2]);
+          kappa_K = gp_exp_quad_cov(surveys, 1, ell_s[s, GP_idx]);
         }
         kappa_U = cholesky_decompose(add_diag(kappa_K, 1e-9))';
         kappa_s[s] *= kappa_U;

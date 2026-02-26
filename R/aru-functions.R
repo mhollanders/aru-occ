@@ -251,7 +251,8 @@ prep_data <- function(deployments, detections,
 }
 
 # add Stan default to output of dh()
-append_defaults <- function(dh) {
-  append(dh, list(dirichlet = 1, period = 0, grainsize = 0, D = 100, OD = 0,
-                  SS = 0))
+append_defaults <- function(dh, dirichlet = 1, period = 0, grainsize = 0,
+                            D = 0, OD = 0, SS = 0) {
+  append(dh, list(dirichlet = dirichlet, period = period, grainsize = grainsize, 
+                  D = D, OD = OD, SS = SS))
 }
