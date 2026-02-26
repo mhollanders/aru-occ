@@ -279,7 +279,7 @@ model {
     target += std_normal_lupdf(gamma_z[p]);
   }
   if (SS) {
-    for (g in 1:3) {
+    for (g in 1:GP) {
       target += std_normal_lupdf(ell_z[g]);
     }
   }
