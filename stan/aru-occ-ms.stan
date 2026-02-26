@@ -249,9 +249,7 @@ transformed parameters {
     lprior += lkj_corr_cholesky_lpdf(O_L[g] | 1);
   }
   if (SS) {
-    lprior += inv_gamma_lpdf(ell_bar[1] | 3, 1)
-              + inv_gamma_lpdf(ell_bar[2] | 3, 1)
-              + inv_gamma_lpdf(ell_bar[3] | 2, 1)
+    lprior += inv_gamma_lpdf(ell_bar | 2, 1)
               + exponential_lpdf(ell_t | 2);
   }
   if (NB) {
