@@ -244,11 +244,7 @@ transformed parameters {
                 + student_t_lpdf(W | 3, 0, 2.5)
                 + gamma_lpdf(theta | 1, 1)
                 + lkj_corr_cholesky_lpdf(alpha_O_L | 1)
-                + inv_gamma_lpdf(ell[1] | 3, 1)
-                + inv_gamma_lpdf(ell[2] | 3, 1);
-  if (periodic) {
-    lprior += inv_gamma_lpdf(ell[3] | 2, 1);
-  }
+                + inv_gamma_lpdf(ell | 2, 1);
   for (g in 1:G) {
     lprior += lkj_corr_cholesky_lpdf(O_L[g] | 1);
   }
