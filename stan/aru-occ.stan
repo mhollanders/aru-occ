@@ -199,11 +199,12 @@ generated quantities {
   
   {
     // reconstruct log likelihood and latent states
+    vector[N] epsilon_vec;
     matrix[OLRE * J, I] epsilon, epsilon_rep;
     if (OLRE) {
-      epsilon = fill_epsilon(tau[2, V[2]] * epsilon_z[1], f_l, log_Delta);
+      epsilon_vec = tau[2, V[2]] * epsilon_z[1];
+      epsilon = fill_epsilon(epsilon_vec, f_l, log_Delta);
     }
-    array[N] int zeros = zeros_int_array(N), ones = ones_int_array(N);
     tuple(vector[I], matrix[2, I], matrix[J, I]) lp =
       aru_occ(y, Q, f_l, log_Delta, X2, X3, logit_psi, log(mu_bar), 
               beta[2, :P[2]], gamma, iota, kappa, epsilon, phi);
@@ -222,14 +223,15 @@ generated quantities {
       row_vector[I] iota_rep;
       matrix[I, D] log_lik_k;
       for (d in 1:D) {
-        iota_rep = to_row_vector(normal_rng(zeros[:I], tau[2, tau_idx]));
+        iota_rep = to_row_vector(normal_rng(zeros_array(I), tau[2, tau_idx]));
         if (SP) {
           iota_K = gp_exp_quad_cov(XY, 1, ell[1]);
           iota_U = cholesky_decompose(add_diag(iota_K, 1e-9))';
           iota_rep *= iota_U;
         }
         if (OLRE) {
-          epsilon_rep = to_matrix(normal_rng(zeros, tau[2, V[2]]), J, I);
+          epsilon_vec = to_vector(normal_rng(zeros_array(N), tau[2, V[2]]));
+          epsilon_rep = fill_epsilon(epsilon_vec, f_l, log_Delta);
         }
         lp = aru_occ(y, Q, f_l, log_Delta, X2, X3, logit_psi, log(mu_bar), 
                      beta[2, :P[2]], gamma, iota_rep, kappa, epsilon_rep, phi);
@@ -242,7 +244,8 @@ generated quantities {
       
       // produce posterior predictive OLREs regardless
     } else if (OLRE) {
-      epsilon_rep = to_matrix(normal_rng(zeros, tau[2, V[2]]), J, I);
+      epsilon_vec = to_vector(normal_rng(zeros_array(N), tau[2, V[2]]));
+      epsilon_rep = fill_epsilon(epsilon_vec, f_l, log_Delta);
       log_mu += epsilon_rep;
     }
     
