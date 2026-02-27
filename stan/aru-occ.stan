@@ -34,18 +34,17 @@ transformed data {
   array[J] real surveys = linspaced_array(J, 1, J);  // survey sequence
   matrix[J, I] log_Delta = log(Delta');  // offsets
   array[I, 2] int f_l = first_last_survey(Delta);  // first and last surveys
-  array[I] int J_i = zeros_int_array(I),  // number of surveys per site
-               Q = zeros_int_array(I);  // detections by site and species
+  array[I] int Q = zeros_int_array(I);  // detections by site and species
+  int N = 0;  // total surveys
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2];
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
-        J_i[i] += 1;
+        N += 1;
         Q[i] += y[i, j];
       }
     }
   }
-  int N = sum(J_i);  // total surveys
   real log_D = log(D);
 }
 
@@ -173,16 +172,26 @@ model {
             dirichlet_lupdf(W_phi[:V[2], 2] | rep_vector(inv(theta[2]), V[2]))
             : std_normal_lupdf(W_phi_z[:V[2], 2]);
   
-  // residuals for Poisson
-  array[OLRE] vector[N] epsilon;
+  // Poisson OLREs
+  matrix[OLRE * J, I] epsilon = rep_matrix(0, OLRE * J, I);
   if (OLRE) {
-    epsilon[1] = tau[2, V[2]] * epsilon_z[1];
+    target += std_normal_lupdf(epsilon_z[1]);
+    vector[N] epsilon_vec = tau[2, V[2]] * epsilon_z[1];
+    int n = 0;
+    for (i in 1:I) {
+      for (j in f_l[i, 1]:f_l[i, 2]) {
+        if (!is_inf(log_Delta[j, i])) {
+          n += 1;
+          epsilon[j, i] = epsilon_vec[n];
+        }
+      }
+    }
   }
                            
   // likelihood
   target += grainsize ?
             reduce_sum(partial_aru_occ_lupmf, sites, grainsize, y, Q, f_l,
-                       log_Delta, J_i, X2, X3, logit_psi, log(mu_bar),
+                       log_Delta, X2, X3, logit_psi, log(mu_bar), 
                        beta[2, :P[2]], gamma, iota, kappa, epsilon, phi)
             : aru_occ_lupmf(y | Q, f_l, log_Delta, X2, X3, logit_psi,
                             log(mu_bar), beta[2, :P[2]], gamma, iota, kappa,
@@ -199,9 +208,19 @@ generated quantities {
   
   {
     // reconstruct log likelihood and latent states
-    array[OLRE] vector[N] epsilon, epsilon_rep;
+    matrix[OLRE * J, I] epsilon = rep_matrix(0, OLRE * J, I),
+                        epsilon_rep = rep_matrix(0, OLRE * I, J);
     if (OLRE) {
-      epsilon[1] = tau[2, V[2]] * epsilon_z[1];
+      vector[N] epsilon_vec = tau[2, V[2]] * epsilon_z[1];
+      int n = 0;
+      for (i in 1:I) {
+        for (j in f_l[i, 1]:f_l[i, 2]) {
+          if (!is_inf(log_Delta[j, i])) {
+            n += 1;
+            epsilon[j, i] = epsilon_vec[n];
+          }
+        }
+      }
     }
     array[N] int zeros = zeros_int_array(N), ones = ones_int_array(N);
     tuple(vector[I], matrix[2, I], matrix[J, I]) lp =
@@ -229,7 +248,7 @@ generated quantities {
           iota_rep *= iota_U;
         }
         if (OLRE) {
-          epsilon_rep[1] = to_vector(normal_rng(zeros, tau[2, V[2]]));
+          epsilon_rep = to_matrix(normal_rng(zeros, tau[2, V[2]]), J, I);
         }
         lp = aru_occ(y, Q, f_l, log_Delta, X2, X3, logit_psi, log(mu_bar), 
                      beta[2, :P[2]], gamma, iota_rep, kappa, epsilon_rep, phi);
@@ -242,7 +261,7 @@ generated quantities {
       
       // produce posterior predictive OLREs regardless
     } else if (OLRE) {
-      epsilon_rep[1] = to_vector(normal_rng(zeros, tau[2, V[2]]));
+      epsilon_rep = to_matrix(normal_rng(zeros, tau[2, V[2]]), J, I);
     }
     
     // posterior predictions
@@ -254,14 +273,14 @@ generated quantities {
         for (j in f:l) {
           if (!is_inf(log_Delta[j, i])) {
             n += 1;
-            log_mu[j, i] += epsilon_rep[1, n] - epsilon[1, n];
+            log_mu[j, i] += epsilon_rep[j, i];
           }
         }
       }
       if (zrep[i]) {
         for (j in f:l) {
           if (!is_inf(log_Delta[j, i])) {
-            log_mu[j, i] = min({ log_mu[j, i], 20 });
+            log_mu[j, i] = min({ log_mu[j, i] + log_Delta[j, i], 20 });
             yrep[i, j] = NB ?
                          neg_binomial_2_log_rng(log_mu[j, i], phi[1])
                          : poisson_log_rng(log_mu[j, i]);

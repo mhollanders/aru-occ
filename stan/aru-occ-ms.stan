@@ -37,20 +37,19 @@ transformed data {
   array[J] real surveys = linspaced_array(J, 1, J);  // survey sequence
   matrix[J, I] log_Delta = log(Delta');  // offsets
   array[I, 2] int f_l = first_last_survey(Delta);  // first and last surveys
-  array[I] int J_i = zeros_int_array(I);  // number of surveys per site
   array[I, S] int Q = rep_array(0, I, S);  // detections by site and species
+  int N = 0;  // total suveys
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2];
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
-        J_i[i] += 1;
+        N += 1;
         for (s in 1:S) {
           Q[i, s] += y[i, j, s];
         }
       }
     }
   }
-  int N = sum(J_i);  // total surveys
   real log_D = log(D);
 }
 
@@ -290,17 +289,27 @@ model {
               + std_normal_lupdf(to_vector(epsilon_z[1]));
   }
   
-  // multivariate normal residuals for Poisson
-  matrix[OLRE * S, N] epsilon;
+  // Poisson OLREs
+  array[OLRE * I] matrix[S, J] epsilon;
   if (OLRE) {
-    epsilon = rep_matrix(tau[2, V[2] - S - 1] * epsilon_bar_z[1]', S)
-              + diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
+    matrix[S, N] epsilon_mat = 
+      rep_matrix(tau[2, V[2] - S] * epsilon_bar_z[1]', S)
+      + diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
+    int n = 0;
+    for (i in 1:I) {
+      for (j in f_l[i, 1]:f_l[i, 2]) {
+        if (!is_inf(log_Delta[j, i])) {
+          n += 1;
+          epsilon[i, :, j] = epsilon_mat[:, n];
+        }
+      }
+    }
   }
                            
   // likelihood
   target += grainsize ?
             reduce_sum(partial_aru_occ_ms_lupmf, sites, grainsize, y, Q, f_l,
-                       log_Delta, J_i, X2, X3, logit_psi, alpha[:, 2], 
+                       log_Delta, X2, X3, logit_psi, alpha[:, 2], 
                        beta[2, :, :P[2]], gamma, iota, kappa, epsilon, phi)
             : aru_occ_ms_lupmf(y | Q, f_l, log_Delta, X2, X3, logit_psi, 
                                alpha[:, 2], beta[2, :, :P[2]], gamma, iota, 
@@ -325,13 +334,22 @@ generated quantities {
   {
     // reconstruct log likelihood and latent states
     int SN = S * N;
-    row_vector[OLRE * N] epsilon_bar;
-    matrix[OLRE * S, N] epsilon, epsilon_rep;
+    row_vector[N] epsilon_bar;
+    matrix[S, N] epsilon_mat;
+    array[OLRE * I] matrix[S, J] epsilon, epsilon_rep;
     array[SN] int zeros = zeros_int_array(SN), ones = ones_int_array(SN);
     if (OLRE) {
-      epsilon_bar = tau[2, V[2] - S - 1] * epsilon_bar_z[1]';
-      epsilon = rep_matrix(epsilon_bar, S)
-                + diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
+      epsilon_bar = tau[2, V[2] - S] * epsilon_bar_z[1]';
+      epsilon_mat = diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
+      int n = 0;
+      for (i in 1:I) {
+        for (j in f_l[i, 1]:f_l[i, 2]) {
+          if (!is_inf(log_Delta[j, i])) {
+            n += 1;
+            epsilon[i, :, j] = epsilon_bar[n] + epsilon_mat[:, n];
+          }
+        }
+      }
     }
     tuple(matrix[S, I], array[I] matrix[S, 2], array[I] matrix[S, J]) lp =
       aru_occ_ms(y, Q, f_l, log_Delta, X2, X3, logit_psi, alpha[:, 2], 
@@ -356,7 +374,7 @@ generated quantities {
       for (d in 1:D) {
         iota_s = to_matrix(normal_rng(zeros[:S * I], ones[:S * I]), S, I);
         iota_s = diag_pre_multiply(segment(tau[2], tau_idx, S), O_L[O_idx])
-                     * iota_s;
+                 * iota_s;
         if (SP) {
           if (SS) {
             for (s in 1:S) {
@@ -372,10 +390,19 @@ generated quantities {
         }
         iota_rep = rep_matrix(iota_bar, S) + iota_s;
         if (OLRE) {
-          epsilon_rep = to_matrix(normal_rng(zeros, ones), S, N);
-          epsilon_rep = rep_matrix(epsilon_bar, S)
+          epsilon_mat = to_matrix(normal_rng(zeros, ones), S, N);
+          epsilon_mat = rep_matrix(epsilon_bar, S)
                         + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
-                          * epsilon_rep;
+                          * epsilon_mat;
+          int n = 0;
+          for (i in 1:I) {
+            for (j in f_l[i, 1]:f_l[i, 2]) {
+              if (!is_inf(log_Delta[j, i])) {
+                n += 1;
+                epsilon_rep[i, :, j] = epsilon_bar[n] + epsilon_mat[:, n];
+              }
+            }
+          }
         }
         lp = aru_occ_ms(y, Q, f_l, log_Delta, X2, X3, logit_psi, alpha[:, 2], 
                         beta[2, :, :P[2]], gamma, iota_rep, kappa, epsilon_rep, 
@@ -391,10 +418,19 @@ generated quantities {
       
       // produce posterior predictive OLREs regardless
     } else if (OLRE) {
-      epsilon_rep = to_matrix(normal_rng(zeros, ones), S, N);
-      epsilon_rep = rep_matrix(epsilon_bar, S)
+      epsilon_mat = to_matrix(normal_rng(zeros, ones), S, N);
+      epsilon_mat = rep_matrix(epsilon_bar, S)
                     + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
-                      * epsilon_rep;
+                      * epsilon_mat;
+      int n = 0;
+      for (i in 1:I) {
+        for (j in f_l[i, 1]:f_l[i, 2]) {
+          if (!is_inf(log_Delta[j, i])) {
+            n += 1;
+            epsilon_rep[i, :, j] = epsilon_bar[n] + epsilon_mat[:, n];
+          }
+        }
+      }
     }
     
     // posterior predictions
@@ -408,7 +444,7 @@ generated quantities {
         for (j in f:l) {
           if (!is_inf(log_Delta[j, i])) {
             n += 1;
-            log_mu_i[:, j] += epsilon_rep[:, n];
+            log_mu_i[:, j] += epsilon_rep[i, :, j];
           }
         }
       }
@@ -416,7 +452,7 @@ generated quantities {
         if (zrep[i, s]) {
           for (j in f:l) {
             if (!is_inf(log_Delta[j, i])) {
-              log_mu_i[s, j] = min({ log_mu_i[s, j], 20 });
+              log_mu_i[s, j] = min({ log_mu_i[s, j] + log_Delta[j, i], 20 });
               yrep[i, j, s] = NB ?
                               neg_binomial_2_log_rng(log_mu_i[s, j], phi[s])
                               : poisson_log_rng(log_mu_i[s, j]);

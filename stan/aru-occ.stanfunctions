@@ -13,23 +13,24 @@
  * @param gamma      Survey-level coefficients [P[3]]
  * @param iota       Site-level random effects [I]
  * @param kappa      Survey-level random effects [J]
- * @param epsilon    Site-by-survey level random effects [I * J] (OD = 1)
+ * @param epsilon    Site-by-survey level random effects [J, I] (OD = 1)
  * @param phi        Negative binomial overdispersion (OD = 2)
  * @param log_Delta  Offsets [J, I]
  *
  * @return log_lik   Site-by-species level log likelihood [I]
  * @return Omega     Marginal occupancy log likelihoods [2, I]
- * @return log_mu    Log detection rates without residuals [J, I]
+ * @return log_mu    Log detection rates without offsets and OLRE [J, I]
  */
  tuple(vector, matrix, matrix) 
   aru_occ(data array[,] int y, data array[] int Q, data array[,] int f_l,
           data matrix log_Delta, data matrix X2, data array[] matrix X3, 
           row_vector logit_psi, real alpha, row_vector beta, row_vector gamma, 
-          row_vector iota, vector kappa, array[] vector epsilon, vector phi) {
+          row_vector iota, vector kappa, matrix epsilon, vector phi) {
   int I = size(y), J = size(y[1]), OLRE = size(epsilon), NB = size(phi);
   row_vector[I] log_psi = log_inv_logit(logit_psi);
   matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
-                        + rep_matrix(kappa, I) + log_Delta;
+                        + rep_matrix(kappa, I);
+  vector[J] log_mu_i;
   matrix[2, I] Omega;
   Omega[2] = log_psi;
   array[J] int y_i;
@@ -38,18 +39,17 @@
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
-    log_mu[:, i] += (gamma * X3[i])';
+    log_mu[f:l, i] += (gamma * X3[i, :, f:l])';
+    log_mu_i[f:l] = log_mu[f:l, i];
+    if (OLRE) {
+      log_mu_i[f:l] += epsilon[f:l, i];
+    }
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
-        if (NB) {
-          Omega[2, i] += neg_binomial_2_log_lpmf(y_i[j] | log_mu[j, i], phi);
-        } else {
-          if (OLRE) {
-            n += 1;
-            log_mu[j, i] += epsilon[1, n];
-          }
-          Omega[2, i] += poisson_log_lpmf(y_i[j] | log_mu[j, i]);
-        }
+        log_mu_i[j] += log_Delta[j, i];
+        Omega[2, i] += NB ?
+                       neg_binomial_2_log_lpmf(y_i[j] | log_mu_i[j], phi)
+                       : poisson_log_lpmf(y_i[j] | log_mu_i[j]);
       }
     }
     if (Q[i]) {
@@ -71,11 +71,12 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
                   data array[,] int f_l, data matrix log_Delta, data matrix X2, 
                   data array[] matrix X3, row_vector logit_psi, real alpha, 
                   row_vector beta, row_vector gamma, row_vector iota, 
-                  vector kappa, array[] vector epsilon, vector phi) {
+                  vector kappa, matrix epsilon, vector phi) {
   int I = size(y), J = size(y[1]), OLRE = size(epsilon), NB = size(phi);
   row_vector[I] log_psi = log_inv_logit(logit_psi);
   matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
-                        + rep_matrix(kappa, I) + log_Delta;
+                        + rep_matrix(kappa, I);
+  vector[J] log_mu_i;
   vector[2] Omega;
   array[J] int y_i;
   real log_lik = 0;
@@ -83,19 +84,18 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
-    log_mu[:, i] += (gamma * X3[i])';
+    log_mu[f:l, i] += (gamma * X3[i, :, f:l])';
+    log_mu_i[f:l] = log_mu[f:l, i];
+    if (OLRE) {
+      log_mu_i[f:l] += epsilon[f:l, i];
+    }
     Omega[2] = log_psi[i];
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
-        if (NB) {
-          Omega[2] += neg_binomial_2_log_lpmf(y_i[j] | log_mu[j, i], phi);
-        } else {
-          if (OLRE) {
-            n += 1;
-            log_mu[j, i] += epsilon[1, n];
-          }
-          Omega[2] += poisson_log_lpmf(y_i[j] | log_mu[j, i]);
-        }
+        log_mu_i[j] += log_Delta[j, i];
+        Omega[2] += NB ?
+                    neg_binomial_2_log_lpmf(y_i[j] | log_mu_i[j], phi)
+                    : poisson_log_lpmf(y_i[j] | log_mu_i[j]);
       }
     }
     log_lik += Q[i] ? 
@@ -113,13 +113,12 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
 real partial_aru_occ_lpmf(
     data array[] int sites, data int start, data int end, data array[,] int y, 
     data array[] int Q, data array[,] int f_l, data matrix log_Delta, 
-    data array[] int J_i, data matrix X2, data array[] matrix X3, 
-    row_vector logit_psi, real alpha, row_vector beta, row_vector gamma, 
-    row_vector iota, vector kappa, array[] vector epsilon, vector phi) {
+    data matrix X2, data array[] matrix X3, row_vector logit_psi, real alpha, 
+    row_vector beta, row_vector gamma, row_vector iota, vector kappa, 
+    matrix epsilon, vector phi) {
   return aru_occ_lpmf(y[sites] | Q[sites], f_l[sites], log_Delta[:, sites], 
                       X2[:, sites], X3[sites], logit_psi[sites], alpha, beta, 
-                      gamma, iota[sites], kappa, 
-                      epsilon[:, sum(J_i[:start - 1]) + 1:sum(J_i[:end])], phi);
+                      gamma, iota[sites], kappa, epsilon[:, sites], phi);
 }
 
 /** 
@@ -137,26 +136,26 @@ real partial_aru_occ_lpmf(
  * @param gamma      Survey-level coefficients [S, P]
  * @param iota       Site-level random effects [S, I]
  * @param kappa      Survey-level random effects [S, J]
- * @param epsilon    Site-by-survey level random effects [S, I * J] (OD = 1)
+ * @param epsilon    Site-by-survey level random effects [I, S, J] (OD = 1)
  * @param phi        Negative binomial overdispersion [S] (OD = 2)
  * @param log_Delta  Offsets [J, I]
  *
  * @return log_lik   Site-by-species level log likelihood [S, I]
  * @return Omega     Marginal occupancy log likelihoods [I, S, 2]
- * @return log_mu    Log detection rates without residuals [I, S, J]
+ * @return log_mu    Log detection rates without offsets and OLREs [I, S, J]
  */
  tuple(matrix, array[] matrix, array[] matrix) 
   aru_occ_ms(data array[,,] int y, data array[,] int Q, data array[,] int f_l,
              data matrix log_Delta, data matrix X2, data array[] matrix X3, 
              matrix logit_psi, vector alpha, matrix beta, matrix gamma, 
-             matrix iota, matrix kappa, matrix epsilon, vector phi) {
+             matrix iota, matrix kappa, array[] matrix epsilon, vector phi) {
   int I = size(y), J = size(y[1]), S = size(y[1, 1]), OLRE = size(epsilon), 
       NB = size(phi);
   matrix[S, I] log_psi = log_inv_logit(logit_psi);
+  array[I] matrix[S, J] log_mu;
   matrix[S, J] log_mu_i;
   matrix[S, 2] Omega_i;
   array[J, S] int y_i;
-  array[I] matrix[S, J] log_mu;
   array[I] matrix[S, 2] Omega;
   matrix[S, I] log_lik;
   int n = 0;
@@ -164,25 +163,19 @@ real partial_aru_occ_lpmf(
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
     Omega_i[:, 2] = log_psi[:, i];
-    log_mu_i[:, f:l] = rep_matrix(alpha + beta * X2[:, i] + iota[:, i], J_i)
-                       + gamma * X3[i, :, f:l] + kappa[:, f:l];
+    log_mu[i, :, f:l] = rep_matrix(alpha + beta * X2[:, i] + iota[:, i], J_i)
+                        + gamma * X3[i, :, f:l] + kappa[:, f:l];
+    log_mu_i[:, f:l] = log_mu[i, :, f:l];
+    if (OLRE) {
+      log_mu_i[:, f:l] += epsilon[i, :, f:l];
+    }
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
         log_mu_i[:, j] += log_Delta[j, i];
-        log_mu[i, :, j] = log_mu_i[:, j];
-        if (NB) {
-          for (s in 1:S) {
-            Omega_i[s, 2] += neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], 
-                                                     phi[s]);
-          }
-        } else {
-          if (OLRE) {
-            n += 1;
-            log_mu_i[:, j] += epsilon[:, n];
-          }
-          for (s in 1:S) {
-            Omega_i[s, 2] += poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
-          }
+        for (s in 1:S) {
+          Omega[s, 2] += NB ?
+                         neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], phi[s])
+                         : poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
         }
       }
     }
@@ -209,7 +202,7 @@ real aru_occ_ms_lpmf(data array[,,] int y, data array[,] int Q,
                      data array[,] int f_l, data matrix log_Delta, 
                      data matrix X2, data array[] matrix X3, matrix logit_psi, 
                      vector alpha, matrix beta, matrix gamma, matrix iota, 
-                     matrix kappa, matrix epsilon, vector phi) {
+                     matrix kappa, array[] matrix epsilon, vector phi) {
   int I = size(y), J = size(y[1]), S = size(y[1, 1]), OLRE = size(epsilon),
       NB = size(phi);
   matrix[S, I] log_psi = log_inv_logit(logit_psi);
@@ -224,22 +217,16 @@ real aru_occ_ms_lpmf(data array[,,] int y, data array[,] int Q,
     Omega_i[:, 2] = log_psi[:, i];
     log_mu_i[:, f:l] = rep_matrix(alpha + beta * X2[:, i] + iota[:, i], J_i)
                        + gamma * X3[i, :, f:l] + kappa[:, f:l];
+    if (OLRE) {
+      log_mu_i[:, f:l] += epsilon[i, :, f:l];
+    }
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
         log_mu_i[:, j] += log_Delta[j, i];
-        if (NB) {
-          for (s in 1:S) {
-            Omega_i[s, 2] += neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], 
-                                                     phi[s]);
-          }
-        } else {
-          if (OLRE) {
-            n += 1;
-            log_mu_i[:, j] += epsilon[:, n];
-          }
-          for (s in 1:S) {
-            Omega_i[s, 2] += poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
-          }
+        for (s in 1:S) {
+          Omega_i[s, 2] += NB ?
+                           neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], phi[s])
+                           : poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
         }
       }
     }
@@ -260,12 +247,11 @@ real aru_occ_ms_lpmf(data array[,,] int y, data array[,] int Q,
 real partial_aru_occ_ms_lpmf(
     data array[] int sites, data int start, data int end, data array[,,] int y, 
     data array[,] int Q, data array[,] int f_l, data matrix log_Delta, 
-    data array[] int J_i, data matrix X2, data array[] matrix X3, 
-    matrix logit_psi, vector alpha, matrix beta, matrix gamma, matrix iota, 
-    matrix kappa, matrix epsilon, vector phi) {
+    data matrix X2, data array[] matrix X3, matrix logit_psi, vector alpha, 
+    matrix beta, matrix gamma, matrix iota, matrix kappa, 
+    array[] matrix epsilon, vector phi) {
   return aru_occ_ms_lpmf(y[sites] | Q[sites], f_l[sites], log_Delta[:, sites], 
                          X2[:, sites], X3[sites], logit_psi[:, sites], alpha, 
-                         beta, gamma, iota[:, sites], kappa, 
-                         epsilon[:, sum(J_i[:start - 1]) + 1:sum(J_i[:end])], 
+                         beta, gamma, iota[:, sites], kappa, epsilon[sites], 
                          phi);
 }
