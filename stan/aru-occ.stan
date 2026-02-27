@@ -173,19 +173,10 @@ model {
             : std_normal_lupdf(W_phi_z[:V[2], 2]);
   
   // Poisson OLREs
-  matrix[OLRE * J, I] epsilon = rep_matrix(0, OLRE * J, I);
+  matrix[OLRE * J, I] epsilon;
   if (OLRE) {
     target += std_normal_lupdf(epsilon_z[1]);
-    vector[N] epsilon_vec = tau[2, V[2]] * epsilon_z[1];
-    int n = 0;
-    for (i in 1:I) {
-      for (j in f_l[i, 1]:f_l[i, 2]) {
-        if (!is_inf(log_Delta[j, i])) {
-          n += 1;
-          epsilon[j, i] = epsilon_vec[n];
-        }
-      }
-    }
+    epsilon = fill_epsilon(tau[2, V[2]] * epsilon_z[1], f_l, log_Delta);
   }
                            
   // likelihood
@@ -208,19 +199,9 @@ generated quantities {
   
   {
     // reconstruct log likelihood and latent states
-    matrix[OLRE * J, I] epsilon = rep_matrix(0, OLRE * J, I),
-                        epsilon_rep = rep_matrix(0, OLRE * I, J);
+    matrix[OLRE * J, I] epsilon, epsilon_rep;
     if (OLRE) {
-      vector[N] epsilon_vec = tau[2, V[2]] * epsilon_z[1];
-      int n = 0;
-      for (i in 1:I) {
-        for (j in f_l[i, 1]:f_l[i, 2]) {
-          if (!is_inf(log_Delta[j, i])) {
-            n += 1;
-            epsilon[j, i] = epsilon_vec[n];
-          }
-        }
-      }
+      epsilon = fill_epsilon(tau[2, V[2]] * epsilon_z[1], f_l, log_Delta);
     }
     array[N] int zeros = zeros_int_array(N), ones = ones_int_array(N);
     tuple(vector[I], matrix[2, I], matrix[J, I]) lp =
@@ -262,21 +243,13 @@ generated quantities {
       // produce posterior predictive OLREs regardless
     } else if (OLRE) {
       epsilon_rep = to_matrix(normal_rng(zeros, tau[2, V[2]]), J, I);
+      log_mu += epsilon_rep;
     }
     
     // posterior predictions
-    int n = 0;
     for (i in 1:I) {
       int f = f_l[i, 1], l = f_l[i, 2];
       zrep[i] = bernoulli_logit_rng(logit_psi[i]);
-      if (OLRE) {
-        for (j in f:l) {
-          if (!is_inf(log_Delta[j, i])) {
-            n += 1;
-            log_mu[j, i] += epsilon_rep[j, i];
-          }
-        }
-      }
       if (zrep[i]) {
         for (j in f:l) {
           if (!is_inf(log_Delta[j, i])) {

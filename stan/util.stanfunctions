@@ -339,3 +339,45 @@ vector sum_to_zero_simplex_jacobian(vector u) {
   return exp(u - r);
 }
 
+/** 
+ * Fill a matrix with a vector or an array of matrices with a matrix
+ *
+ * @param epsilon_long  "Long" format of OLREs [(S, )N]
+ * @param f_l           First and last survey [I, 2]
+ * @param log_Delta     Offsets [J, I]
+ *
+ * @return epsilon      Matrix or array of matrices of OLREs [J, I] or [I, S, J]
+ */
+matrix fill_epsilon(vector epsilon_long, data array[,] int f_l,
+                    data matrix log_Delta) {
+  int I = cols(log_Delta), J = rows(log_Delta);
+  matrix[J, I] epsilon;
+  int n = 0;
+  for (i in 1:I) {
+    for (j in f_l[i, 1]:f_l[i, 2]) {
+      if (!is_inf(log_Delta[j, i])) {
+        n += 1;
+        epsilon[j, i] = epsilon_long[n];
+      }
+    }
+  }
+  return epsilon;
+}
+
+
+array[] matrix fill_epsilon(matrix epsilon_long, data array[,] int f_l,
+                            data matrix log_Delta) {
+  int I = cols(log_Delta), J = rows(log_Delta), S = rows(epsilon_long);
+  array[I] matrix[S, J] epsilon;
+  int n = 0;
+  for (i in 1:I) {
+    for (j in f_l[i, 1]:f_l[i, 2]) {
+      if (!is_inf(log_Delta[j, i])) {
+        n += 1;
+        epsilon[i, :, j] = epsilon_long[:, n];
+      }
+    }
+  }
+  return epsilon;
+}
+

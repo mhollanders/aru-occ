@@ -292,18 +292,11 @@ model {
   // Poisson OLREs
   array[OLRE * I] matrix[S, J] epsilon;
   if (OLRE) {
-    matrix[S, N] epsilon_mat = 
-      rep_matrix(tau[2, V[2] - S] * epsilon_bar_z[1]', S)
-      + diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
-    int n = 0;
-    for (i in 1:I) {
-      for (j in f_l[i, 1]:f_l[i, 2]) {
-        if (!is_inf(log_Delta[j, i])) {
-          n += 1;
-          epsilon[i, :, j] = epsilon_mat[:, n];
-        }
-      }
-    }
+    row_vector[N] epsilon_bar = tau[2, V[2] - S] * epsilon_bar_z[1]';
+    matrix[S, N] epsilon_mat = rep_matrix(epsilon_bar, S)
+                               + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
+                                 * epsilon_z[1];
+    epsilon = fill_epsilon(epsilon_mat, f_l, log_Delta);
   }
                            
   // likelihood
@@ -341,15 +334,7 @@ generated quantities {
     if (OLRE) {
       epsilon_bar = tau[2, V[2] - S] * epsilon_bar_z[1]';
       epsilon_mat = diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
-      int n = 0;
-      for (i in 1:I) {
-        for (j in f_l[i, 1]:f_l[i, 2]) {
-          if (!is_inf(log_Delta[j, i])) {
-            n += 1;
-            epsilon[i, :, j] = epsilon_bar[n] + epsilon_mat[:, n];
-          }
-        }
-      }
+      epsilon = fill_epsilon(epsilon_mat, f_l, log_Delta);
     }
     tuple(matrix[S, I], array[I] matrix[S, 2], array[I] matrix[S, J]) lp =
       aru_occ_ms(y, Q, f_l, log_Delta, X2, X3, logit_psi, alpha[:, 2], 
@@ -394,15 +379,7 @@ generated quantities {
           epsilon_mat = rep_matrix(epsilon_bar, S)
                         + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
                           * epsilon_mat;
-          int n = 0;
-          for (i in 1:I) {
-            for (j in f_l[i, 1]:f_l[i, 2]) {
-              if (!is_inf(log_Delta[j, i])) {
-                n += 1;
-                epsilon_rep[i, :, j] = epsilon_bar[n] + epsilon_mat[:, n];
-              }
-            }
-          }
+          epsilon_rep = fill_epsilon(epsilon_mat, f_l, log_Delta);
         }
         lp = aru_occ_ms(y, Q, f_l, log_Delta, X2, X3, logit_psi, alpha[:, 2], 
                         beta[2, :, :P[2]], gamma, iota_rep, kappa, epsilon_rep, 
@@ -422,32 +399,18 @@ generated quantities {
       epsilon_mat = rep_matrix(epsilon_bar, S)
                     + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
                       * epsilon_mat;
-      int n = 0;
+      epsilon_rep = fill_epsilon(epsilon_mat, f_l, log_Delta);
       for (i in 1:I) {
-        for (j in f_l[i, 1]:f_l[i, 2]) {
-          if (!is_inf(log_Delta[j, i])) {
-            n += 1;
-            epsilon_rep[i, :, j] = epsilon_bar[n] + epsilon_mat[:, n];
-          }
-        }
+        log_mu[i] += epsilon_rep[i];
       }
     }
     
     // posterior predictions
     matrix[S, J] log_mu_i;
-    int n = 0;
     for (i in 1:I) {
       int f = f_l[i, 1], l = f_l[i, 2];
       zrep[i] = bernoulli_logit_rng(logit_psi[:, i]);
       log_mu_i = log_mu[i];
-      if (OLRE) {
-        for (j in f:l) {
-          if (!is_inf(log_Delta[j, i])) {
-            n += 1;
-            log_mu_i[:, j] += epsilon_rep[i, :, j];
-          }
-        }
-      }
       for (s in 1:S) {
         if (zrep[i, s]) {
           for (j in f:l) {

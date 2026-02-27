@@ -35,7 +35,6 @@
   Omega[2] = log_psi;
   array[J] int y_i;
   vector[I] log_lik;
-  int n = 0;
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
@@ -77,10 +76,8 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
   matrix[J, I] log_mu = rep_matrix(alpha + beta * X2 + iota, J)
                         + rep_matrix(kappa, I);
   vector[J] log_mu_i;
-  vector[2] Omega;
   array[J] int y_i;
-  real log_lik = 0;
-  int n = 0;
+  real Omega, log_lik = 0;
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
@@ -89,18 +86,16 @@ real aru_occ_lpmf(data array[,] int y, data array[] int Q,
     if (OLRE) {
       log_mu_i[f:l] += epsilon[f:l, i];
     }
-    Omega[2] = log_psi[i];
+    Omega = log_psi[i];
     for (j in f:l) {
       if (!is_inf(log_Delta[j, i])) {
         log_mu_i[j] += log_Delta[j, i];
-        Omega[2] += NB ?
-                    neg_binomial_2_log_lpmf(y_i[j] | log_mu_i[j], phi)
-                    : poisson_log_lpmf(y_i[j] | log_mu_i[j]);
+        Omega += NB ?
+                 neg_binomial_2_log_lpmf(y_i[j] | log_mu_i[j], phi)
+                 : poisson_log_lpmf(y_i[j] | log_mu_i[j]);
       }
     }
-    log_lik += Q[i] ? 
-               Omega[2] 
-               : log_sum_exp(log_psi[i] - logit_psi[i], Omega[2]);
+    log_lik += Q[i] ? Omega : log_sum_exp(log_psi[i] - logit_psi[i], Omega);
   }
   return log_lik;
 }
@@ -158,7 +153,6 @@ real partial_aru_occ_lpmf(
   array[J, S] int y_i;
   array[I] matrix[S, 2] Omega;
   matrix[S, I] log_lik;
-  int n = 0;
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
@@ -207,14 +201,13 @@ real aru_occ_ms_lpmf(data array[,,] int y, data array[,] int Q,
       NB = size(phi);
   matrix[S, I] log_psi = log_inv_logit(logit_psi);
   matrix[S, J] log_mu_i;
-  matrix[S, 2] Omega_i;
   array[J, S] int y_i;
+  vector[S] Omega;
   real log_lik = 0;
-  int n = 0;
   for (i in 1:I) {
     int f = f_l[i, 1], l = f_l[i, 2], J_i = l - f + 1;
     y_i[f:l] = y[i, f:l];
-    Omega_i[:, 2] = log_psi[:, i];
+    Omega = log_psi[:, i];
     log_mu_i[:, f:l] = rep_matrix(alpha + beta * X2[:, i] + iota[:, i], J_i)
                        + gamma * X3[i, :, f:l] + kappa[:, f:l];
     if (OLRE) {
@@ -224,16 +217,16 @@ real aru_occ_ms_lpmf(data array[,,] int y, data array[,] int Q,
       if (!is_inf(log_Delta[j, i])) {
         log_mu_i[:, j] += log_Delta[j, i];
         for (s in 1:S) {
-          Omega_i[s, 2] += NB ?
-                           neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], phi[s])
-                           : poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
+          Omega[s] += NB ?
+                      neg_binomial_2_log_lpmf(y_i[j, s] | log_mu_i[s, j], phi[s])
+                      : poisson_log_lpmf(y_i[j, s] | log_mu_i[s, j]);
         }
       }
     }
     for (s in 1:S) {
       log_lik += Q[i, s] ? 
-                 Omega_i[s, 2] 
-                 : log_sum_exp(log_psi[s, i] - logit_psi[s, i], Omega_i[s, 2]);
+                 Omega[s] 
+                 : log_sum_exp(log_psi[s, i] - logit_psi[s, i], Omega[s]);
     }
   }
   return log_lik;
