@@ -68,9 +68,9 @@ parameters {
   array[periodic] simplex[2] kappa_v;  // variance partitions of periodic and exp. quad. kernels
   vector<lower=0>[GP] ell;  // GP length scales
   
-  // OLRE residuals or 1/sqrt(negative binomial overdispersion)
+  // OLRE residuals or negative binomial overdispersion
   array[OLRE] sum_to_zero_vector[N] epsilon_z;
-  vector<lower=0>[NB] inv_sqrt_phi;
+  vector<lower=0>[NB] phi;
 }
 
 transformed parameters {
@@ -140,9 +140,6 @@ transformed parameters {
     kappa = kappa_L * kappa_z;
   }
   
-  // negative binomial overdispersion
-  vector[NB] phi = square(inv(inv_sqrt_phi));
-  
   // occupancy
   row_vector[I] logit_psi = logit(psi_bar) + beta[1, :P[1]] * X1;
   
@@ -153,7 +150,7 @@ transformed parameters {
                 + gamma_lpdf(theta | 1, 1)
                 + inv_gamma_lpdf(ell | 3, 1);
   if (NB) {
-    lprior += exponential_lpdf(inv_sqrt_phi | 2);
+    lprior += inv_gamma_lpdf(phi | 0.4, 0.3);
   }
 }
 

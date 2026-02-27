@@ -84,11 +84,10 @@ parameters {
   vector<lower=0>[SS * GP] ell_bar, ell_t;  // GP length scales means and scales for species functions
   array[SS * GP] sum_to_zero_vector[S] ell_z;  // species-level length scale z-scores
   
-  // OLRE residuals or 1/sqrt(negative binomial overdispersion)
+  // OLRE residuals or negative binomial overdispersion
   array[OLRE] sum_to_zero_vector[N] epsilon_bar_z;  // global residual z-scores
   array[OLRE] sum_to_zero_matrix[S, N] epsilon_z;  // species-level residual z-scores
-  vector<lower=0>[NB] inv_sqrt_phi_bar, inv_sqrt_phi_t;  // OD mean and scale
-  array[NB] sum_to_zero_vector[S] inv_sqrt_phi_z;  // species-level z-scores
+  vector<lower=0>[NB * S] phi;
 }
 
 transformed parameters {
@@ -227,13 +226,6 @@ transformed parameters {
     kappa += kappa_s;
   }
   
-  // negative binomial overdispersion
-  vector[NB * S] inv_sqrt_phi, phi;
-  if (NB) {
-    inv_sqrt_phi = log(inv_sqrt_phi_bar[1]) + inv_sqrt_phi_t[1] * inv_sqrt_phi_z[1];
-    phi = exp(-2 * inv_sqrt_phi);
-  }
-  
   // occupancy
   matrix[S, I] logit_psi = rep_matrix(alpha[:, 1], I) + beta[1, :, :P[1]] * X1;
   
@@ -252,8 +244,7 @@ transformed parameters {
               + exponential_lpdf(ell_t | 2);
   }
   if (NB) {
-    lprior += exponential_lpdf(inv_sqrt_phi_bar[1] | 2);
-    lprior += exponential_lpdf(inv_sqrt_phi_t[1] | 2);
+    lprior += inv_gamma_lpdf(phi | 0.4, 0.3);
   }
 }
 
@@ -282,16 +273,12 @@ model {
       target += std_normal_lupdf(ell_z[g]);
     }
   }
-  if (NB) {
-    target += std_normal_lupdf(inv_sqrt_phi_z[1]);
-  } else if (OLRE) {
-    target += std_normal_lupdf(epsilon_bar_z[1])
-              + std_normal_lupdf(to_vector(epsilon_z[1]));
-  }
   
   // Poisson OLREs
   array[OLRE * I] matrix[S, J] epsilon;
   if (OLRE) {
+    target += std_normal_lupdf(epsilon_bar_z[1])
+              + std_normal_lupdf(to_vector(epsilon_z[1]));
     row_vector[N] epsilon_bar = tau[2, V[2] - S] * epsilon_bar_z[1]';
     matrix[S, N] epsilon_mat = rep_matrix(epsilon_bar, S)
                                + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
