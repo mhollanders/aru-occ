@@ -326,11 +326,9 @@ generated quantities {
   
   {
     // reconstruct log likelihood and latent states
-    int SN = S * N;
     row_vector[N] epsilon_bar;
     matrix[S, N] epsilon_mat;
     array[OLRE * I] matrix[S, J] epsilon, epsilon_rep;
-    array[SN] int zeros = zeros_int_array(SN), ones = ones_int_array(SN);
     if (OLRE) {
       epsilon_bar = tau[2, V[2] - S] * epsilon_bar_z[1]';
       epsilon_mat = diag_pre_multiply(tail(tau[2], S), O_L[G]) * epsilon_z[1];
@@ -350,6 +348,7 @@ generated quantities {
     array[I] matrix[S, J] log_mu = lp.3;
     
     // Monte Carlo for loo
+    int SI = S * I, SN = S * N;
     if (D) {
       int tau_idx = 1 + 2 * sum(P[2:3]) + 2, 
           O_idx = (P[1] > 0) + (P[2] > 0) + (P[3] > 0) + 1;
@@ -357,7 +356,7 @@ generated quantities {
       matrix[S, I] iota_s, iota_rep;
       array[D] matrix[S, I] log_lik_k;
       for (d in 1:D) {
-        iota_s = to_matrix(normal_rng(zeros[:S * I], ones[:S * I]), S, I);
+        iota_s = to_matrix(normal_rng(zeros_array(SI), ones_array(SI)), S, I);
         iota_s = diag_pre_multiply(segment(tau[2], tau_idx, S), O_L[O_idx])
                  * iota_s;
         if (SP) {
@@ -375,7 +374,7 @@ generated quantities {
         }
         iota_rep = rep_matrix(iota_bar, S) + iota_s;
         if (OLRE) {
-          epsilon_mat = to_matrix(normal_rng(zeros, ones), S, N);
+          epsilon_mat = to_matrix(normal_rng(zeros_array(SN), ones_array(SN)), S, N);
           epsilon_mat = rep_matrix(epsilon_bar, S)
                         + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
                           * epsilon_mat;
@@ -395,7 +394,7 @@ generated quantities {
       
       // produce posterior predictive OLREs regardless
     } else if (OLRE) {
-      epsilon_mat = to_matrix(normal_rng(zeros, ones), S, N);
+      epsilon_mat = to_matrix(normal_rng(zeros_array(SN), ones_array(SN)), S, N);
       epsilon_mat = rep_matrix(epsilon_bar, S)
                     + diag_pre_multiply(tail(tau[2], S), O_L[G]) 
                       * epsilon_mat;
