@@ -34,6 +34,16 @@ prep_data <- function(deployments, detections,
                       occupancy_site_predictors = NULL,
                       detection_site_predictors = NULL,
                       survey_predictors = NULL, date = date) {
+  # get global reference date from earliest deployment
+  if (missing(reference_date)) {
+    reference_date <- deployments |>
+      pull({{ start }}) |>
+      min()
+  } else {
+    assert_that(inherits(reference_date, "Date"),
+                msg = "`reference_date` must be NULL or a date.")
+  }
+  
   # data checks
   assert_that(identical(deployments |> 
                           pull({{ site }}) |> 
@@ -83,7 +93,8 @@ prep_data <- function(deployments, detections,
                 msg = "Factor levels for `site` are not identical for `deployments` and `occupancy_site_predictors`.")
   }
   
-  if (!is.null(detection_site_predictors)) {
+  if (!is.null(detection_site_predictors) &&
+      !all.equal(occupancy_site_predictors, detection_site_predictors)) {
     assert_that(identical(deployments |> 
                             pull({{ site }}) |> 
                             levels(),
@@ -103,9 +114,9 @@ prep_data <- function(deployments, detections,
                 msg = "Factor levels for `site` are not identical for `deployments` and `survey_predictors`.")
     first_last <- survey_predictors |> 
       summarise(first = min({{ date }}), last = max({{ date }}))
-    assert_that(first_last$first <= min(pull(deployments, {{ start }})) &&
+    assert_that(first_last$first <= reference_date &&
                   first_last$last >= max(pull(deployments, {{ end }})),
-                msg = "`survey_predictors` don't cover full deployment.")
+                msg = "`survey_predictors` don't cover full deployment, or do not start on provided `reference_date`.")
   }
   
   # check for detections outside start and end dates
@@ -127,16 +138,6 @@ prep_data <- function(deployments, detections,
     pull({{ species }}) |>
     levels()
   S <- length(species_lvl)
-  
-  # get global reference date from earliest deployment
-  if (missing(reference_date)) {
-    reference_date <- deployments |>
-      pull({{ start }}) |>
-      min()
-  } else {
-    assert_that(inherits(reference_date, "Date"),
-                msg = "`reference_date` must be NULL or a date.")
-  }
   
   # create daily deployment grid first
   daily_grid <- deployments |>
@@ -230,6 +231,9 @@ prep_data <- function(deployments, detections,
   }
   if (is.null(detection_site_predictors)) {
     X2 <- matrix(nrow = 0, ncol = I)
+  } else if (all.equal(occupancy_site_predictors, detection_site_predictors)) {
+    P[2] <- P[1]
+    X2 <- X1
   } else {
     X2 <- detection_site_predictors |>
       arrange({{ site }}) |>
@@ -246,10 +250,12 @@ prep_data <- function(deployments, detections,
       colnames()
     P[3] <- length(X3_lvl)
     X3 <- survey_predictors |>
+      filter({{ date }} >= reference_date) |> 
       mutate(date = aggregate_by_days({{ date }}, reference_date, days)) |>
       summarise(across(where(is.numeric), mean), 
                 .by = c({{ site }}, {{ date }})) |>
       pivot_longer(-c({{ site }}, {{ date }}), names_to = "p") |>
+      mutate(p = factor(p, levels = X3_lvl)) |> 
       arrange({{ date }}, p, {{ site }}) |> 
       pull(value) |> 
       array(c(I, P[3], J), dimnames = list(site_lvl, X3_lvl, surveys))
