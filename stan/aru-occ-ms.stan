@@ -153,7 +153,7 @@ transformed parameters {
       for (p in 1:P[2]) {
         beta_z_mat[:, p] = beta_z[P[1] + p];
       }
-      beta[1, :, :P[2]] = 
+      beta[2, :, :P[2]] = 
         rep_matrix(beta_bar[2, :P[2]], S)
         + O_L[O_idx] * diag_post_multiply(beta_z_mat, 
                                           segment(tau[2], tau_idx + P[2], P[2]));
