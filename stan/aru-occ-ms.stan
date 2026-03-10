@@ -68,7 +68,7 @@ parameters {
   
   // coefficients for predictors
   row_vector[P_i] beta_bar_z;  // global site coefficients
-  array[2, P_i] sum_to_zero_vector[S] beta_z;  // site coefficient z-scores
+  array[P_i] sum_to_zero_vector[S] beta_z;  // site coefficient z-scores
   row_vector[P[3]] gamma_bar_z;  // global survey coefficients
   array[P[3]] sum_to_zero_vector[S] gamma_z;  // survey coefficient z-scores
   
@@ -130,29 +130,39 @@ transformed parameters {
     int tau_idx = 2, GP_idx = 0, O_idx = 0;
     
     // site-level predictors
-    if (P_i) {
+    if (P[1]) {
+      O_idx += 1;
       beta_bar[1, :P[1]] = segment(tau[1], tau_idx, P[1]) 
                            .* head(beta_bar_z, P[1]);
+      matrix[S, P[1]] beta_z_mat;
+      for (p in 1:P[1]) {
+        beta_z_mat[:, p] = beta_z[p];
+      }
+      beta[1, :, :P[1]] = 
+        rep_matrix(beta_bar[1, :P[1]], S)
+        + O_L[O_idx] * diag_post_multiply(beta_z_mat, 
+                                          segment(tau[1], tau_idx + P[1], P[1]));
+                           
+      
+    }
+    if (P[2]) {
+      O_idx += 1;
       beta_bar[2, :P[2]] = segment(tau[2], tau_idx, P[2]) 
                            .* tail(beta_bar_z, P[2]);
-      for (d in 1:2) {
-        O_idx += P[d] ? 1 : 0;
-        matrix[S, P[d]] beta_z_mat;
-        for (p in 1:P[d]) {
-          beta_z_mat[:, p] = beta_z[d, p];
-        }
-        beta[d, :, :P[d]] = 
-          rep_matrix(beta_bar[d, :P[d]], S)
-          + O_L[O_idx] 
-            * diag_post_multiply(beta_z_mat[:, :P[d]], 
-                                 segment(tau[d], tau_idx + P[d], P[d]));
+      matrix[S, P[2]] beta_z_mat;
+      for (p in 1:P[2]) {
+        beta_z_mat[:, p] = beta_z[P[1] + p];
       }
+      beta[1, :, :P[2]] = 
+        rep_matrix(beta_bar[2, :P[2]], S)
+        + O_L[O_idx] * diag_post_multiply(beta_z_mat, 
+                                          segment(tau[2], tau_idx + P[2], P[2]));
     }
     
     // survey-level predictors
     if (P[3]) {
-      O_idx += 1;
       tau_idx += 2 * P[2];
+      O_idx += 1;
       gamma_bar = segment(tau[2], tau_idx, P[3]) .* gamma_bar_z;
       row_vector[P[3]] gamma_t = segment(tau[2], tau_idx + 1, P[3]);
       matrix[S, P[3]] gamma_z_mat;
@@ -261,9 +271,9 @@ model {
               dirichlet_lupdf(W_phi[:V[d], d] | rep_vector(inv(theta[d]), V[d]))
               : std_normal_lupdf(W_phi_z[:V[d], d]);
     target += std_normal_lupdf(alpha_z[d]);
-    for (p in 1:P_i) {
-      target += std_normal_lupdf(beta_z[d, p]);
-    }
+  }
+  for (p in 1:P_i) {
+    target += std_normal_lupdf(beta_z[p]);
   }
   for (p in 1:P[3]) {
     target += std_normal_lupdf(gamma_z[p]);
